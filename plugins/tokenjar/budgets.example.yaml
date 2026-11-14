@@ -54,7 +54,8 @@ buckets:
     paths: [~/writing/**]
     period: weekly
     reset_day: mon
-    limit: 3M
+    limit: 3M             # or a share of your Claude plan, e.g. "15% of plan"
+                          # (estimated from the status line; see the README)
 
   personal:               # the default bucket; no limit = track only
     period: monthly
@@ -67,3 +68,4 @@ buckets:
 
 # statusline:
 #   bar_width: 5
+#   show_plan: true       # append " · plan 34%" (the plan's weekly usage)

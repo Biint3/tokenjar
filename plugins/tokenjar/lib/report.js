@@ -7,6 +7,7 @@ const fmt = require('./format');
 const ledger = require('./ledger');
 const budget = require('./budget');
 const periods = require('./periods');
+const plan = require('./plan');
 
 const LEVEL_COLOR = { ok: 'green', warn: 'yellow', over: 'red', none: 'dim' };
 
@@ -33,11 +34,11 @@ function statusText(cfg, opts = {}) {
       name + (name === cfg.default_bucket ? '*' : ''),
       unconfigured ? '(not in config)' : periodLabel(st),
       fmt.compact(st.used),
-      st.limit === null ? '-' : fmt.compact(st.limit) + (st.extra ? ` (+${fmt.compact(st.extra)})` : ''),
+      limitLabel(st),
       st.limit === null ? '' : `${fmt.bar(st.fraction, 10)} ${fmt.pct(st.fraction)}`,
       st.limit === null ? '' : fmt.compact(st.remaining),
       fmt.dateLabel(st.end),
-      st.limit === null ? 'track' : st.blocking ? 'BLOCKED' : st.level === 'over' ? 'over (warn)' : st.mode,
+      st.calibrating ? 'calibrating' : st.limit === null ? 'track' : st.blocking ? 'BLOCKED' : st.level === 'over' ? 'over (warn)' : st.mode,
     ]);
   }
 
@@ -64,8 +65,73 @@ function statusText(cfg, opts = {}) {
     lines.push('No budgets.yaml yet: everything is tracked in one bucket. Run /budget init to create one.');
   }
   lines.push('');
+  lines.push(...planLines(cfg, snap, now));
+  lines.push('');
   lines.push(...ledgerLines(cfg, now));
   return lines.join('\n');
+}
+
+function limitLabel(st) {
+  const extra = st.extra ? ` (+${fmt.compact(st.extra)})` : '';
+  if (st.planPct) {
+    const share = `${st.planPct}% plan`;
+    return st.calibrating ? `${share}, calibrating` : `${fmt.compact(st.limit)} (${share})${extra}`;
+  }
+  return st.limit === null ? '-' : fmt.compact(st.limit) + extra;
+}
+
+function timeLabel(epochSec) {
+  const d = new Date(epochSec * 1000);
+  return `${fmt.dateLabel(d)} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+/** Plan usage reported by Claude Code, the calibration, and each bucket's estimated plan share. */
+function planInfo(cfg, snap, now = new Date()) {
+  const cur = plan.current(undefined, now.getTime());
+  const cal = budget.calibration(cfg);
+  const info = { current: cur, calibration: cal, shares: null, windowStart: null };
+  if (cur && cur.weekly && cal.perPct) {
+    const ws = plan.windowStart(cur.weekly);
+    info.windowStart = ws;
+    const from = agg.localDay(ws);
+    const shares = {};
+    let total = 0;
+    for (const [b, slots] of Object.entries(snap.byBucket)) {
+      const pct = agg.sumSlots(slots, cfg, from).total / cal.perPct;
+      if (pct >= 0.05) shares[b] = pct;
+      total += pct;
+    }
+    info.shares = shares;
+    info.claudeCodeTotal = total;
+  }
+  return info;
+}
+
+function planLines(cfg, snap, now) {
+  const { current: cur, calibration: cal, shares, windowStart, claudeCodeTotal } = planInfo(cfg, snap, now);
+  const out = [];
+  if (!cur && !cal.points) {
+    out.push('Plan: no weekly usage % seen yet. Claude Code reports it to the status line on Pro/Max/Ultra');
+    out.push('plans; with /budget statusline install, tokenjar learns how your budgets relate to it.');
+    return out;
+  }
+  if (cur) {
+    const parts = [];
+    if (cur.weekly) parts.push(`weekly ${fmt.pct(cur.weekly.pct / 100)} used, resets ${timeLabel(cur.weekly.reset)}`);
+    if (cur.fiveHour) parts.push(`5-hour ${fmt.pct(cur.fiveHour.pct / 100)}`);
+    out.push(`Plan (reported by Claude Code): ${parts.join(' · ')}`);
+  }
+  if (cal.perPct) {
+    out.push(`Estimate: 1% of the weekly plan ≈ ${fmt.compact(cal.perPct)} ${cfg.metric === 'weighted' ? 'weighted tokens' : 'tokens'} (from ${cal.points} points of movement${cal.windows > 1 ? ` over ${cal.windows} weekly windows` : ''}).`);
+    if (shares) {
+      const list = Object.entries(shares).sort((a, b) => b[1] - a[1]).map(([b, p]) => `${b} ≈${p.toFixed(p < 10 ? 1 : 0)}%`).join(', ');
+      out.push(`This plan week (since ${fmt.dateLabel(windowStart)}): ${list || 'nothing yet'}; Claude Code ≈${Math.round(claudeCodeTotal)}% of the ${fmt.pct(cur.weekly.pct / 100)} reported.`);
+      out.push('The rest is usage tokenjar cannot see (claude.ai, cloud sessions, other machines) or estimate error.');
+    }
+  } else {
+    out.push(`Calibrating: seen ${cal.points} of ${plan.MIN_POINTS} percentage points of plan movement needed for an estimate.`);
+  }
+  return out;
 }
 
 function ago(date, now) {
@@ -113,18 +179,20 @@ function usageText(cfg, opts = {}) {
 }
 
 /** Status line segment, e.g. `creative ▓▓▓▓░ 64% · resets Mon`. */
-function segment(cfg, { sessionId, cwd, color = false, now = new Date() }) {
-  const snap = agg.snapshot(cfg);
+function segment(cfg, { sessionId, cwd, color = false, now = new Date(), planWeekly = null, snap: given = null }) {
+  const snap = given || agg.snapshot(cfg);
   const { bucket } = budget.sessionBucket(cfg, snap, sessionId, cwd);
   const st = budget.bucketStatus(cfg, snap, bucket, now);
   const paint = (t, c) => (color && c && t ? `\x1b[${{ green: 32, yellow: 33, red: 31, dim: 2 }[c]}m${t}\x1b[0m` : t);
+  const showPlan = Boolean(cfg.statusline && cfg.statusline.show_plan);
+  const planTail = showPlan && planWeekly ? paint(` · plan ${fmt.pct(planWeekly.pct / 100)}`, 'dim') : '';
   if (st.limit === null) {
-    return paint(`${bucket} · ${fmt.compact(st.used)} ${periods.noun(st.period)}`, 'dim');
+    return paint(`${bucket} · ${fmt.compact(st.used)} ${periods.noun(st.period)}${st.calibrating ? ' · calibrating' : ''}`, 'dim') + planTail;
   }
   const width = cfg.statusline ? cfg.statusline.bar_width : 5;
   const barText = width > 0 ? `${fmt.bar(st.fraction, width)} ` : '';
   const tail = st.blocking ? ' · blocked' : '';
-  return `${bucket} ${paint(`${barText}${fmt.pct(st.fraction)}`, LEVEL_COLOR[st.level])} · resets ${fmt.resetLabel(st.end, now)}${paint(tail, 'red')}`;
+  return `${bucket} ${paint(`${barText}${fmt.pct(st.fraction)}`, LEVEL_COLOR[st.level])} · resets ${fmt.resetLabel(st.end, now)}${paint(tail, 'red')}${planTail}`;
 }
 
 /**
@@ -202,6 +270,19 @@ function queryJson(cfg, opts = {}) {
     buckets: bucketsOut,
     last_14_days: days,
     projects: projectList,
+    plan: (() => {
+      const p = planInfo(cfg, snap, now);
+      return {
+        source: 'Claude Code status line (rate_limits), Pro/Max/Ultra plans only; recorded on this machine',
+        weekly_percent_used: p.current && p.current.weekly ? p.current.weekly.pct : null,
+        weekly_resets: p.current && p.current.weekly ? new Date(p.current.weekly.reset * 1000).toISOString() : null,
+        five_hour_percent_used: p.current && p.current.fiveHour ? p.current.fiveHour.pct : null,
+        tokens_per_weekly_percent: p.calibration.perPct ? r(p.calibration.perPct) : null,
+        calibration_points: p.calibration.points,
+        estimated_share_this_plan_week: p.shares ? Object.fromEntries(Object.entries(p.shares).map(([b, v]) => [b, Math.round(v * 10) / 10])) : null,
+        caveat: 'Estimate. The plan % also includes usage tokenjar cannot see (claude.ai, cloud sessions, other machines).',
+      };
+    })(),
   };
 }
 

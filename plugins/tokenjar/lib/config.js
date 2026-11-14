@@ -83,10 +83,16 @@ function normalizeBucket(name, raw, errors, globals) {
       else out.reset_day = d;
     }
   }
+  out.limit_plan_pct = null;
   if (b.limit !== undefined && b.limit !== null) {
+    const planPct = require('./plan').parsePlanLimit(b.limit);
     const n = fmt.parseAmount(b.limit);
-    if (!Number.isFinite(n) || n <= 0) errors.push(`${where}.limit: expected an amount like 500k, 20M or 1.5B (got ${JSON.stringify(b.limit)})`);
-    else out.limit = n;
+    if (Number.isFinite(planPct)) {
+      if (planPct <= 0 || planPct > 1000) errors.push(`${where}.limit: plan share must be between 0% and 1000%`);
+      else out.limit_plan_pct = planPct;
+    } else if (!Number.isFinite(n) || n <= 0) {
+      errors.push(`${where}.limit: expected an amount like 500k, 20M or 1.5B, or a plan share like "30% of plan" (got ${JSON.stringify(b.limit)})`);
+    } else out.limit = n;
   }
   if (b.warn_at !== undefined) {
     const f = fmt.parseFraction(b.warn_at);
@@ -144,6 +150,10 @@ function normalize(raw) {
     if (raw.statusline.bar_width !== undefined) {
       if (Number.isInteger(w) && w >= 0 && w <= 30) cfg.statusline.bar_width = w;
       else errors.push('statusline.bar_width: expected a whole number 0-30');
+    }
+    if (raw.statusline.show_plan !== undefined) {
+      if (typeof raw.statusline.show_plan === 'boolean') cfg.statusline.show_plan = raw.statusline.show_plan;
+      else errors.push('statusline.show_plan: expected true or false');
     }
   }
 

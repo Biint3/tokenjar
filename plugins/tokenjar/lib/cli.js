@@ -12,6 +12,7 @@ const enforce = require('./enforce');
 const budget = require('./budget');
 const aggregate = require('./aggregate');
 const format = require('./format');
+const plan = require('./plan');
 
 /** Bytes of transcript a single hook call may read (keeps hooks fast). */
 const HOOK_READ_BUDGET = 16 * 1024 * 1024;
@@ -155,7 +156,15 @@ async function runStatusline() {
       ledger.ingest(cfg, files, { maxBytes: 4 * 1024 * 1024, lockWaitMs: 0, bucketFor: (c) => config.bucketForCwd(cfg, c) });
     }
     const cwd = (input.workspace && input.workspace.current_dir) || input.cwd || process.cwd();
-    ours = report.segment(cfg, { sessionId: input.session_id, cwd, color: !process.env.NO_COLOR });
+    const snap = aggregate.snapshot(cfg);
+    // The status line is the only place Claude Code exposes the plan's usage %.
+    const planNow = plan.fromStatusInput(input);
+    try {
+      plan.record(cfg, input, { snap });
+    } catch (err) {
+      log.warn('plan snapshot failed', err);
+    }
+    ours = report.segment(cfg, { sessionId: input.session_id, cwd, color: !process.env.NO_COLOR, snap, planWeekly: planNow && planNow.weekly });
   } catch (err) {
     log.error('status line failed', err);
   }

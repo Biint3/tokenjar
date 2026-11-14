@@ -75,8 +75,34 @@ So by default budgets use a **weighted** metric, an *API-equivalent cost in inpu
 The weights are configurable, and you can switch to `metric: raw` (every token counts 1) or `metric: output`.
 
 > [!NOTE]
-> **Budgets are self-imposed.** Claude subscription quotas and rate limits are not visible to plugins, so a
-> tokenjar budget is your own relative target ("work may use 20M per week"), not your plan's limit.
+> **Budgets are your own targets**, in absolute amounts of the metric ("work may use 20M per week"). The %
+> tokenjar shows is *used ÷ your limit*, not your plan's usage. To relate the two, see
+> [Budgets as a share of your plan](#budgets-as-a-share-of-your-plan).
+
+### Budgets as a share of your plan
+
+On Pro, Max and Ultra plans, Claude Code tells the **status line** how much of the plan's weekly (and
+5-hour) limit is used. Hooks don't get this, so it needs the tokenjar status line installed. Each time the weekly %
+moves, tokenjar notes how many tokens were used meanwhile and learns roughly **how many tokens equal 1% of
+your weekly plan**. It needs at least 2 points of movement to give an estimate. Then:
+
+* `/budget status` shows the plan's weekly %, the estimate, and each bucket's approximate share of the
+  current plan week, e.g. `work ≈18%, personal ≈3%; Claude Code ≈21% of the 34% reported`.
+* Limits can be written as a share of the plan:
+
+  ```yaml
+  work:
+    limit: 30% of plan     # = 30 × (tokens per 1% of the weekly plan)
+    period: weekly
+  ```
+
+  For daily or monthly buckets the share is scaled to the period length (a 30-day month = 30/7 plan weeks).
+  Until the estimate exists, such a bucket is tracked with no limit (`calibrating`) and never blocks.
+* `statusline: {show_plan: true}` adds ` · plan 34%` to the status line.
+
+This is an **estimate**. The plan % also counts usage tokenjar can't see (claude.ai chat, cloud sessions,
+other machines without tokenjar), Anthropic doesn't publish how plan usage is weighted, and plan snapshots
+are kept per machine. The estimate gets better the more you use Claude Code compared with everything else.
 
 ## Configuration
 
