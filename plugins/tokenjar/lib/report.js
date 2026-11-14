@@ -1,55 +1,106 @@
 'use strict';
-// Building the /budget status report.
+// Text output: /budget status, /budget usage, and the status line segment.
 
 const agg = require('./aggregate');
 const acc = require('./accounting');
 const fmt = require('./format');
 const ledger = require('./ledger');
+const budget = require('./budget');
+const periods = require('./periods');
+
+const LEVEL_COLOR = { ok: 'green', warn: 'yellow', over: 'red', none: 'dim' };
 
 function startOfWeek(now) {
-  const d = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const back = (d.getDay() + 6) % 7; // Monday
-  d.setDate(d.getDate() - back);
-  return d;
+  return periods.range('weekly', 'mon', now).start;
+}
+
+function periodLabel(st) {
+  const b = st.bucket;
+  if (st.period === 'daily') return 'daily';
+  if (st.period === 'monthly') return `monthly (${b.reset_day})`;
+  return `weekly (${String(b.reset_day).slice(0, 3).toLowerCase()})`;
 }
 
 function statusText(cfg, opts = {}) {
   const now = opts.now || new Date();
   const snap = agg.snapshot(cfg);
-  const today = agg.localDay(now);
-  const week = agg.localDay(startOfWeek(now));
-  const month = agg.localDay(new Date(now.getFullYear(), now.getMonth(), 1));
-
-  const names = Object.keys(snap.byBucket).sort();
-  const rows = names.map((b) => {
-    const slots = snap.byBucket[b];
-    return [
-      b,
-      fmt.compact(agg.sumSlots(slots, cfg, today).total),
-      fmt.compact(agg.sumSlots(slots, cfg, week).total),
-      fmt.compact(agg.sumSlots(slots, cfg, month).total),
-      fmt.compact(agg.sumSlots(slots, cfg).total),
-    ];
-  });
+  const names = budget.allBucketNames(cfg, snap);
+  const rows = [];
+  for (const name of names) {
+    const st = budget.bucketStatus(cfg, snap, name, now);
+    const unconfigured = Boolean(st.bucket.unconfigured);
+    rows.push([
+      name + (name === cfg.default_bucket ? '*' : ''),
+      unconfigured ? '(not in config)' : periodLabel(st),
+      fmt.compact(st.used),
+      st.limit === null ? '-' : fmt.compact(st.limit) + (st.extra ? ` (+${fmt.compact(st.extra)})` : ''),
+      st.limit === null ? '' : `${fmt.bar(st.fraction, 10)} ${fmt.pct(st.fraction)}`,
+      st.limit === null ? '' : fmt.compact(st.remaining),
+      fmt.dateLabel(st.end),
+      st.limit === null ? 'track' : st.blocking ? 'BLOCKED' : st.level === 'over' ? 'over (warn)' : st.mode,
+    ]);
+  }
 
   const lines = [];
-  lines.push(`tokenjar · ${acc.metricLabel(cfg.metric)}`);
+  lines.push(`tokenjar · budgets in ${acc.metricLabel(cfg.metric)}`);
   lines.push('');
-  if (rows.length) lines.push(fmt.table(['bucket', 'today', 'this week', 'this month', 'all time'], rows));
-  else lines.push('No usage recorded yet.');
+  lines.push(fmt.table(['bucket', 'period', 'used', 'limit', 'progress', 'left', 'resets', 'mode'], rows));
+  lines.push('* default bucket for folders that match no rule');
+
+  if (opts.session || opts.cwd) {
+    const sb = budget.sessionBucket(cfg, snap, opts.session, opts.cwd);
+    const sess = opts.session && snap.bySession[opts.session];
+    const spent = sess ? agg.sumSlots(sess.slots, cfg).total : 0;
+    lines.push('');
+    lines.push(`This session: ${sb.bucket} (${sb.reason}), ${fmt.compact(spent)} so far.`);
+  }
+  if (opts.errors && opts.errors.length) {
+    lines.push('');
+    lines.push(`Config problems in ${opts.configFile}:`);
+    for (const e of opts.errors) lines.push(`  - ${e}`);
+    if (cfg.enforce === false) lines.push('  Budgets are NOT enforced until the file parses again.');
+  } else if (opts.configExists === false) {
+    lines.push('');
+    lines.push('No budgets.yaml yet: everything is tracked in one bucket. Run /budget init to create one.');
+  }
   lines.push('');
-  lines.push(`Ledger: ${ledger.ledgerDir(cfg)}`);
+  const files = snap.ledgerFiles.length;
+  lines.push(`Ledger: ${ledger.ledgerDir(cfg)}${files > 1 ? ` (${files} machines)` : ''}`);
   return lines.join('\n');
 }
 
-/** One-line status segment for the session's bucket (no budgets configured yet). */
-function segment(cfg, { sessionId, cwd, color = false }) {
+/** Today / this week / this month / all time per bucket. */
+function usageText(cfg, opts = {}) {
+  const now = opts.now || new Date();
   const snap = agg.snapshot(cfg);
-  const bucket = (sessionId && snap.overrides[sessionId]) || require('./config').bucketForCwd(cfg, cwd);
-  const week = agg.localDay(startOfWeek(new Date()));
-  const used = agg.sumSlots(snap.byBucket[bucket], cfg, week).total;
-  const text = `${bucket} · ${fmt.compact(used)} this week`;
-  return color ? `\x1b[2m${text}\x1b[0m` : text;
+  const today = agg.localDay(now);
+  const week = agg.localDay(startOfWeek(now));
+  const month = agg.localDay(new Date(now.getFullYear(), now.getMonth(), 1));
+  const rows = Object.keys(snap.byBucket).sort().map((b) => {
+    const slots = snap.byBucket[b];
+    return [b, ...[today, week, month, undefined].map((from) => fmt.compact(agg.sumSlots(slots, cfg, from).total))];
+  });
+  const all = Object.values(snap.byBucket).reduce((v, slots) => acc.addVec(v, agg.sumSlots(slots, cfg).vec), acc.emptyVec());
+  const lines = [`tokenjar · usage in ${acc.metricLabel(cfg.metric)} (calendar weeks start Monday)`, ''];
+  lines.push(rows.length ? fmt.table(['bucket', 'today', 'this week', 'this month', 'all time'], rows) : 'No usage recorded yet.');
+  lines.push('');
+  lines.push(`All-time raw tokens: input ${fmt.compact(all[0])}, output ${fmt.compact(all[1])}, cache read ${fmt.compact(all[2])}, cache write ${fmt.compact(all[3] + all[4])} across ${all[5]} API responses.`);
+  return lines.join('\n');
 }
 
-module.exports = { statusText, segment };
+/** Status line segment, e.g. `creative ▓▓▓▓░ 64% · resets Mon`. */
+function segment(cfg, { sessionId, cwd, color = false, now = new Date() }) {
+  const snap = agg.snapshot(cfg);
+  const { bucket } = budget.sessionBucket(cfg, snap, sessionId, cwd);
+  const st = budget.bucketStatus(cfg, snap, bucket, now);
+  const paint = (t, c) => (color && c ? `\x1b[${{ green: 32, yellow: 33, red: 31, dim: 2 }[c]}m${t}\x1b[0m` : t);
+  if (st.limit === null) {
+    return paint(`${bucket} · ${fmt.compact(st.used)} ${periods.noun(st.period)}`, 'dim');
+  }
+  const width = cfg.statusline ? cfg.statusline.bar_width : 5;
+  const barText = width > 0 ? `${fmt.bar(st.fraction, width)} ` : '';
+  const tail = st.blocking ? ' · blocked' : '';
+  return `${bucket} ${paint(`${barText}${fmt.pct(st.fraction)}`, LEVEL_COLOR[st.level])} · resets ${fmt.resetLabel(st.end, now)}${paint(tail, 'red')}`;
+}
+
+module.exports = { statusText, usageText, segment };

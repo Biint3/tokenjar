@@ -122,9 +122,55 @@ function cmdStatuslineSetup(action, opts) {
   return 'usage: /budget statusline install [--force] | uninstall';
 }
 
-function cmdStatus(cfg, opts) {
-  syncAll(cfg);
-  return report.statusText(cfg, opts);
+/** Full catch-up before reports, with a note if another process held the lock. */
+function syncForReport(cfg) {
+  const r = syncAll(cfg);
+  return r.locked ? '(Another tokenjar process was syncing; numbers may lag by a moment.)\n' : '';
+}
+
+function cmdStatus(loaded, opts) {
+  const note = syncForReport(loaded.config);
+  return note + report.statusText(loaded.config, {
+    ...opts,
+    errors: loaded.errors,
+    configFile: loaded.file,
+    configExists: loaded.exists,
+  });
+}
+
+function cmdInit() {
+  const r = config.init();
+  return r.created
+    ? `Created ${r.file} from the example. Edit the buckets and folder globs, then run /budget status to check it.`
+    : `A config already exists at ${r.file}; not overwriting it.`;
+}
+
+const HELP = [
+  'tokenjar /budget commands:',
+  '  /budget                         status of all buckets (same as /budget status)',
+  '  /budget usage                   today / week / month / all-time per bucket',
+  '  /budget init                    create budgets.yaml from the example',
+  '  /budget statusline install      add the tokenjar status line (keeps yours)',
+  '  /budget statusline uninstall    remove it again',
+].join('\n');
+
+/** The /budget command: `budget [--session id] [--cwd dir] <subcommand> ...` */
+function runBudget(loaded, rest, opts) {
+  const sub = (rest[0] || 'status').toLowerCase();
+  switch (sub) {
+    case 'status':
+      return cmdStatus(loaded, opts);
+    case 'usage':
+      return syncForReport(loaded.config) + report.usageText(loaded.config, opts);
+    case 'init':
+      return cmdInit();
+    case 'statusline':
+      return cmdStatuslineSetup(rest[1], opts);
+    case 'help':
+      return HELP;
+    default:
+      return `Unknown subcommand "${rest[0]}".\n\n${HELP}`;
+  }
 }
 
 async function main(argv) {
@@ -133,27 +179,23 @@ async function main(argv) {
   if (cmd === 'statusline') return runStatusline();
 
   const { opts, rest } = parseArgs(args);
-  const { config: cfg } = loadConfig();
   let out;
   try {
+    const loaded = loadConfig();
     switch (cmd) {
+      case 'budget':
+        out = runBudget(loaded, rest, opts);
+        break;
       case 'status':
-        out = cmdStatus(cfg, opts);
+        out = cmdStatus(loaded, opts);
         break;
       case 'sync': {
-        const r = opts.all ? syncAll(cfg) : syncAll(cfg);
+        const r = syncAll(loaded.config);
         out = r.locked ? 'Another tokenjar process is syncing; try again in a moment.' : `Synced: ${r.appended} new events (${Math.round(r.bytesRead / 1e6)} MB read).`;
         break;
       }
-      case 'budget': {
-        const sub = rest[0] || 'status';
-        if (sub === 'status') out = cmdStatus(cfg, opts);
-        else if (sub === 'statusline') out = cmdStatuslineSetup(rest[1], opts);
-        else out = `Unknown subcommand "${sub}". Try: /budget status`;
-        break;
-      }
       default:
-        out = 'usage: tokenjar.js <status|sync|budget|hook> ...';
+        out = `usage: tokenjar.js <budget|status|sync|statusline|hook> ...\n\n${HELP}`;
     }
   } catch (err) {
     log.error(`command ${cmd} failed`, err);

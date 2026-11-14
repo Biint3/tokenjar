@@ -1,0 +1,69 @@
+# tokenjar budgets
+#
+# Budgets are self-imposed: Claude subscription quotas are not visible to
+# plugins, so these limits are your own relative targets, not your plan's.
+#
+# Amounts accept k / M / B suffixes (500k, 20M, 1.5B).
+# After editing, run /budget status to check the file for mistakes.
+
+# How usage is counted:
+#   weighted  API-equivalent cost in input-token units (default). Cache reads
+#             count 0.1, output 5, etc., so long cached sessions don't
+#             inflate totals.
+#   raw       every token counts 1 (input + output + cache reads + writes)
+#   output    output tokens only
+metric: weighted
+
+# Weights for the weighted metric, relative to one fresh input token.
+weights:
+  input: 1
+  output: 5
+  cache_write_5m: 1.25
+  cache_write_1h: 2
+  cache_read: 0.1
+
+# Optional: scale the weighted metric per model (matched by substring of the
+# model id, longest match wins). Leave empty to treat all models alike.
+# model_multipliers:
+#   opus: 1
+#   sonnet: 0.6
+#   haiku: 0.2
+
+# Sessions in folders that match no bucket go here.
+default_bucket: personal
+
+buckets:
+  work:
+    paths:
+      - ~/work/**
+      - ~/clients/**
+    period: weekly        # daily | weekly | monthly
+    reset_day: mon        # weekly: mon..sun   monthly: 1..31
+    limit: 20M
+    warn_at: 80%
+    mode: block           # warn | block
+
+  fun:
+    paths: [~/fun/**, ~/games/**]
+    period: monthly
+    reset_day: 1
+    limit: 5M
+    mode: warn
+
+  creative:
+    paths: [~/writing/**]
+    period: weekly
+    reset_day: mon
+    limit: 3M
+
+  personal:               # the default bucket; no limit = track only
+    period: monthly
+
+# Sync mode (optional): keep the ledger in a folder synced between your
+# machines (Dropbox, iCloud Drive, Syncthing...). Each machine writes its
+# own ledger-<machine>.jsonl there; totals are the sum of all files.
+# ledger_dir: ~/Dropbox/tokenjar
+# machine_name: laptop    # defaults to the hostname
+
+# statusline:
+#   bar_width: 5
