@@ -8,6 +8,10 @@ const transcript = require('./transcript');
 const paths = require('./paths');
 const report = require('./report');
 const statusline = require('./statusline');
+const enforce = require('./enforce');
+const budget = require('./budget');
+const aggregate = require('./aggregate');
+const format = require('./format');
 
 /** Bytes of transcript a single hook call may read (keeps hooks fast). */
 const HOOK_READ_BUDGET = 16 * 1024 * 1024;
@@ -67,12 +71,50 @@ async function runHook(event) {
       case 'sync': // Stop, SubagentStop, SessionEnd
         if (input.transcript_path) syncSession(cfg, input.transcript_path);
         break;
+      case 'prompt': // UserPromptSubmit
+        return promptHook(input);
       default:
         break;
     }
   } catch (err) {
     log.error(`hook ${event} failed`, err);
   }
+  return 0;
+}
+
+function emit(obj) {
+  process.stdout.write(JSON.stringify(obj) + '\n');
+}
+
+/**
+ * UserPromptSubmit: catch up on usage, then allow / warn (once per session) /
+ * block. Blocking uses decision:block with a reason, which Claude Code shows
+ * to the user; the prompt never reaches the model.
+ */
+function promptHook(input) {
+  if (enforce.isOwnCommand(input.prompt)) return 0;
+  const loaded = loadConfig();
+  const cfg = loaded.config;
+  const sid = input.session_id;
+  if (input.transcript_path) syncSession(cfg, input.transcript_path);
+
+  const messages = [];
+  if (loaded.errors.length && loaded.exists && enforce.firstNotice(sid, `config|${loaded.errors.join('|')}`)) {
+    const how = cfg.enforce === false ? ' Budgets are not enforced until it parses again.' : '';
+    messages.push(`tokenjar: ${loaded.errors.length} problem(s) in ${loaded.file}: ${loaded.errors[0]}${loaded.errors.length > 1 ? ' (run /budget status for all)' : ''}.${how}`);
+  }
+
+  const snap = aggregate.snapshot(cfg);
+  const { bucket } = budget.sessionBucket(cfg, snap, sid, input.cwd);
+  const st = budget.bucketStatus(cfg, snap, bucket);
+  const d = enforce.decide(cfg, st, { prompt: input.prompt, configFile: loaded.file });
+  if (d.action === 'block') {
+    log.info(`blocked prompt: bucket ${bucket} at ${Math.round(st.fraction * 100)}%`);
+    emit({ decision: 'block', reason: d.message });
+    return 0;
+  }
+  if (d.action === 'warn' && enforce.firstNotice(sid, d.noticeKey)) messages.push(d.message);
+  if (messages.length) emit({ systemMessage: messages.join('\n') });
   return 0;
 }
 
@@ -145,10 +187,72 @@ function cmdInit() {
     : `A config already exists at ${r.file}; not overwriting it.`;
 }
 
+function cmdSet(loaded, rest, opts) {
+  const cfg = loaded.config;
+  const name = rest[1];
+  if (!name) return 'usage: /budget set <bucket>   (or /budget set auto to go back to folder rules)';
+  if (!opts.session || opts.session === true || /^\$\{/.test(opts.session)) return 'tokenjar: no session id available, so the bucket cannot be set for this session.';
+  const clear = ['auto', 'none', 'clear', 'reset'].includes(name.toLowerCase());
+  if (!clear && !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,39}$/.test(name)) return `"${name}" is not a valid bucket name.`;
+  ledger.recordEvent(cfg, { t: 'o', s: opts.session, b: clear ? null : name, why: 'set' });
+  if (clear) {
+    const e = config.explainBucket(cfg, opts.cwd);
+    return `This session is back on folder rules: bucket "${e.bucket}" (${e.reason}).`;
+  }
+  const note = cfg.buckets[name] ? '' : `\nNote: "${name}" is not in ${loaded.file}, so it is tracked without a limit.`;
+  return `This session now counts against "${name}", including what it used so far.${note}\nUndo with /budget set auto.`;
+}
+
+function cmdExtend(loaded, rest) {
+  const cfg = loaded.config;
+  const [, name, amountRaw] = rest;
+  if (!name || !amountRaw) return 'usage: /budget extend <bucket> <amount>   e.g. /budget extend work 5M';
+  const b = cfg.buckets[name];
+  if (!b) return `No bucket "${name}" in ${loaded.file}. Buckets: ${cfg.bucketList.map((x) => x.name).join(', ')}`;
+  if (b.limit === null) return `"${name}" has no limit, so there is nothing to extend.`;
+  const amt = format.parseAmount(amountRaw);
+  if (!Number.isFinite(amt) || amt <= 0) return `"${amountRaw}" is not an amount. Use e.g. 500k, 5M or 1.5B.`;
+  syncForReport(cfg);
+  const before = budget.bucketStatus(cfg, aggregate.snapshot(cfg), name);
+  ledger.recordEvent(cfg, { t: 'x', b: name, amt, ps: before.startDay });
+  const st = budget.bucketStatus(cfg, aggregate.snapshot(cfg), name);
+  return [
+    `Extended "${name}" by ${format.compact(amt)} until it resets ${format.dateLabel(st.end)}.`,
+    `Now ${format.compact(st.used)} of ${format.compact(st.limit)} (${format.pct(st.fraction)}), ${format.compact(st.remaining)} left.`,
+  ].join('\n');
+}
+
+/** Move this machine's sessions to the bucket the current folder rules give them. */
+function cmdRebucket(loaded, opts) {
+  const cfg = loaded.config;
+  syncForReport(cfg);
+  const moves = [];
+  for (const [sid, s] of Object.entries(aggregate.ownSessions(cfg))) {
+    if (s.override && s.override.why === 'set') continue; // never undo an explicit /budget set
+    if (!s.cwd) continue;
+    const want = config.bucketForCwd(cfg, s.cwd);
+    const current = s.override && s.override.b ? [s.override.b] : s.buckets;
+    if (current.length === 1 && current[0] === want) continue;
+    moves.push({ sid, from: current.join('+'), to: want });
+  }
+  if (!moves.length) return 'All sessions already match your folder rules.';
+  const summary = {};
+  for (const m of moves) summary[`${m.from} -> ${m.to}`] = (summary[`${m.from} -> ${m.to}`] || 0) + 1;
+  const lines = Object.entries(summary).map(([k, n]) => `  ${k}: ${n} session${n === 1 ? '' : 's'}`);
+  if (!opts.apply) {
+    return ['Sessions that the current folder rules would put in a different bucket:', ...lines, '', 'Run /budget rebucket --apply to move them (explicit /budget set choices are kept).'].join('\n');
+  }
+  for (const m of moves) ledger.recordEvent(cfg, { t: 'o', s: m.sid, b: m.to, why: 'rebucket' });
+  return ['Moved:', ...lines].join('\n');
+}
+
 const HELP = [
   'tokenjar /budget commands:',
   '  /budget                         status of all buckets (same as /budget status)',
+  '  /budget set <bucket>            count this session against <bucket> (auto = folder rules)',
+  '  /budget extend <bucket> <amt>   one-off increase for the current period, e.g. 5M',
   '  /budget usage                   today / week / month / all-time per bucket',
+  '  /budget rebucket [--apply]      re-file past sessions after changing folder rules',
   '  /budget init                    create budgets.yaml from the example',
   '  /budget statusline install      add the tokenjar status line (keeps yours)',
   '  /budget statusline uninstall    remove it again',
@@ -162,6 +266,12 @@ function runBudget(loaded, rest, opts) {
       return cmdStatus(loaded, opts);
     case 'usage':
       return syncForReport(loaded.config) + report.usageText(loaded.config, opts);
+    case 'set':
+      return cmdSet(loaded, rest, opts);
+    case 'extend':
+      return cmdExtend(loaded, rest);
+    case 'rebucket':
+      return cmdRebucket(loaded, opts);
     case 'init':
       return cmdInit();
     case 'statusline':

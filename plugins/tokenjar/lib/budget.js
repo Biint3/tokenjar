@@ -46,7 +46,7 @@ function bucketStatus(cfg, snap, name, now = new Date()) {
 /** Which bucket a session is in right now: override first, then folder rules. */
 function sessionBucket(cfg, snap, sessionId, cwd) {
   const ov = sessionId ? snap.overrides[sessionId] : null;
-  if (ov) return { bucket: ov, reason: 'set for this session with /budget set' };
+  if (ov) return { bucket: ov, reason: 'set by /budget set or /budget rebucket' };
   return config.explainBucket(cfg, cwd);
 }
 

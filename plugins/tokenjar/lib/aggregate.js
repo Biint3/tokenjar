@@ -9,18 +9,19 @@ const fsu = require('./fsutil');
 const ledger = require('./ledger');
 const acc = require('./accounting');
 
-const CACHE_VERSION = 2;
+const CACHE_VERSION = 3;
 
 function cacheFile() {
   return path.join(paths.stateDir(), 'agg.json');
 }
 
+/**
+ * Cheap time-zone signature (Intl initialisation costs tens of ms in a hook).
+ * Day buckets are local, so the cache is rebuilt when this changes.
+ */
 function tzName() {
-  try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || String(new Date().getTimezoneOffset());
-  } catch {
-    return String(new Date().getTimezoneOffset());
-  }
+  const y = new Date().getFullYear();
+  return `${process.env.TZ || ''}|${new Date(y, 0, 1).getTimezoneOffset()}|${new Date(y, 6, 1).getTimezoneOffset()}`;
 }
 
 function localDay(ts) {
@@ -31,7 +32,7 @@ function localDay(ts) {
 }
 
 function emptyFileData() {
-  return { s: {}, o: {}, x: [] };
+  return { s: {}, o: {}, x: [], c: {} };
 }
 
 function foldEvent(data, ev) {
@@ -49,9 +50,10 @@ function foldEvent(data, ev) {
     v[3] += ev.cw5 || 0;
     v[4] += ev.cw1 || 0;
     v[5] += 1;
+    if (typeof ev.cwd === 'string') (data.c || (data.c = {}))[sid] = ev.cwd;
   } else if (ev.t === 'o' && typeof ev.s === 'string') {
     const prev = data.o[ev.s];
-    if (!prev || String(ev.ts) >= String(prev.ts)) data.o[ev.s] = { b: ev.b || null, ts: ev.ts };
+    if (!prev || String(ev.ts) >= String(prev.ts)) data.o[ev.s] = { b: ev.b || null, ts: ev.ts, why: ev.why || 'set' };
   } else if (ev.t === 'x' && typeof ev.b === 'string' && Number.isFinite(ev.amt)) {
     data.x.push({ b: ev.b, amt: ev.amt, ps: ev.ps, ts: ev.ts });
   }
@@ -150,4 +152,26 @@ function sumSlots(slots, cfg, fromDay, toDay) {
   return { total, vec };
 }
 
-module.exports = { load, snapshot, sumSlots, localDay, foldEvent, cacheFile };
+/**
+ * Sessions recorded by THIS machine with their stored bucket(s), last folder
+ * and any override. Used by /budget rebucket (other machines' folders don't
+ * mean anything here, so their sessions are left alone).
+ */
+function ownSessions(cfg) {
+  const cache = load(cfg);
+  const own = cache.files[ledger.ownLedgerFile(cfg)];
+  const overrides = {};
+  for (const entry of Object.values(cache.files)) {
+    for (const [sid, o] of Object.entries(entry.data.o)) {
+      if (!overrides[sid] || String(o.ts) >= String(overrides[sid].ts)) overrides[sid] = o;
+    }
+  }
+  const out = {};
+  if (!own) return out;
+  for (const [sid, buckets] of Object.entries(own.data.s)) {
+    out[sid] = { buckets: Object.keys(buckets), cwd: (own.data.c || {})[sid] || null, override: overrides[sid] || null };
+  }
+  return out;
+}
+
+module.exports = { load, snapshot, sumSlots, localDay, foldEvent, cacheFile, ownSessions };

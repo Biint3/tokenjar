@@ -12,7 +12,8 @@
 //   "o"  override { s, b|null, ts }   session -> bucket override
 //   "x"  extend   { b, amt, ps, ts }  one-off limit increase for the period starting ps
 //
-// Idempotency: a local key index (state/keys/YYYY-MM.json) maps message key to
+// Idempotency: a local key index (state/keys/YYYY-MM-DD.json, one shard per
+// UTC day so a hook only loads a few KB) maps message key to
 // the counts already recorded. Re-reading any transcript only appends growth.
 // Each shard stores `_m`, the ledger size it is consistent with; after a crash
 // between appending to the ledger and saving the index, the ledger tail is
@@ -27,6 +28,8 @@ const log = require('./log');
 const transcript = require('./transcript');
 
 const CHUNK = 8 * 1024 * 1024;
+// Bump when the key-index layout changes: old state is then rebuilt from the ledger.
+const STATE_VERSION = 2;
 
 function ledgerDir(cfg) {
   return cfg && cfg.ledger_dir ? path.resolve(paths.expandHome(cfg.ledger_dir)) : paths.defaultLedgerDir();
@@ -94,12 +97,17 @@ function keysDir() {
   return path.join(paths.stateDir(), 'keys');
 }
 
+/** Shard id for an event timestamp: its UTC day. */
+function shardOf(ts) {
+  return ts.slice(0, 10);
+}
+
 function shardFile(month) {
   return path.join(keysDir(), `${month}.json`);
 }
 
 function freshState(ledgerFile) {
-  return { v: 1, ledgerFile, committed: 0, months: [], files: {} };
+  return { v: STATE_VERSION, ledgerFile, committed: 0, months: [], files: {} };
 }
 
 class KeyIndex {
@@ -138,7 +146,7 @@ function usageVals(ev) {
 /** Add a ledger usage event's counts into the index (events are additive). */
 function applyToIndex(index, ev) {
   if (ev.t !== 'u' || typeof ev.k !== 'string' || typeof ev.ts !== 'string') return;
-  const s = index.shard(ev.ts.slice(0, 7));
+  const s = index.shard(shardOf(ev.ts));
   const prev = s.data.k[ev.k] || [0, 0, 0, 0, 0];
   const add = usageVals(ev);
   s.data.k[ev.k] = prev.map((v, i) => v + add[i]);
@@ -152,7 +160,7 @@ function rebuildIndex(ledgerFile) {
   const months = new Set();
   const end = forEachEvent(ledgerFile, 0, undefined, (ev) => {
     if (ev.t !== 'u' || typeof ev.ts !== 'string') return;
-    const month = ev.ts.slice(0, 7);
+    const month = shardOf(ev.ts);
     if (!months.has(month)) {
       index.reset(month);
       months.add(month);
@@ -184,7 +192,7 @@ function reconcile(cfg) {
   const size = st ? st.size : 0;
 
   const shardsMissing = state && (state.months || []).some((m) => !fsu.statOrNull(shardFile(m)));
-  if (!state || state.v !== 1 || shardsMissing || size < (state.committed || 0)) {
+  if (!state || state.v !== STATE_VERSION || shardsMissing || size < (state.committed || 0)) {
     // No trustworthy state: the ledger is the source of truth. Re-derive the
     // key index from it; transcript offsets restart at 0 and re-reading is
     // safe because the index dedupes.
@@ -194,27 +202,33 @@ function reconcile(cfg) {
     state.committed = rebuilt.end;
     rebuilt.index.save(rebuilt.end);
     if (size > 0) log.info(`rebuilt key index from ledger (${rebuilt.months.length} months)`);
-    return { state, index: new KeyIndex() };
+    return { state, index: new KeyIndex(), dirty: true };
   }
 
   const index = new KeyIndex();
+  let dirty = false;
   if (size > state.committed) {
+    dirty = true;
+    let applied = 0;
     // A previous run appended events but may not have saved the index.
     const months = new Set(state.months);
     forEachEvent(ledgerFile, state.committed, size, (ev, at) => {
       if (ev.t !== 'u' || typeof ev.ts !== 'string') return;
-      const month = ev.ts.slice(0, 7);
+      const month = shardOf(ev.ts);
       const s = index.shard(month);
       if (at < (s.data._m || 0)) return; // already in this shard
       applyToIndex(index, ev);
       months.add(month);
+      applied++;
     });
     index.save(size);
     state.months = [...months];
     state.committed = size;
-    log.info('reconciled key index with ledger tail');
+    // Overrides/extends appended outside ingest also land here; only usage
+    // events found past the commit point mean a previous run was interrupted.
+    if (applied) log.info(`reconciled key index with ledger tail (${applied} events)`);
   }
-  return { state, index };
+  return { state, index, dirty };
 }
 
 // ----- ingest --------------------------------------------------------------
@@ -231,7 +245,8 @@ function ingest(cfg, files, opts = {}) {
   const release = fsu.tryLock(path.join(paths.stateDir(), 'sync.lock'), { waitMs: opts.lockWaitMs ?? 300 });
   if (!release) return { appended: 0, bytesRead: 0, pending: true, locked: true };
   try {
-    const { state, index } = reconcile(cfg);
+    const { state, index, dirty: reconciled } = reconcile(cfg);
+    let changed = false;
     const ledgerFile = ownLedgerFile(cfg);
     let budget = maxBytes;
     let bytesRead = 0;
@@ -248,7 +263,7 @@ function ingest(cfg, files, opts = {}) {
         else for (const f of transcript.USAGE_FIELDS) prev[f] = Math.max(prev[f], r[f]);
       }
       for (const r of byKey.values()) {
-        const month = r.timestamp.slice(0, 7);
+        const month = shardOf(r.timestamp);
         const s = index.shard(month);
         const vals = [r.input, r.output, r.cacheRead, r.cacheWrite5m, r.cacheWrite1h];
         const prev = s.data.k[r.key];
@@ -310,8 +325,12 @@ function ingest(cfg, files, opts = {}) {
         offset = r.nextOffset;
         if (r.eof || consumed === 0) break;
       }
+      if (offset !== fstate.offset || !state.files[file]) changed = true;
       state.files[file] = { offset, size: st.size, mtimeMs: Math.floor(st.mtimeMs) };
     }
+
+    // Nothing new: skip all writes (the common case for hooks).
+    if (!events.length && !changed && !reconciled) return { appended: 0, bytesRead, pending, locked: false };
 
     // Order matters for crash safety: ledger first, then index, then state.
     appendEvents(cfg, events);

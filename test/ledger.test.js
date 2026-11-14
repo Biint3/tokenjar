@@ -131,7 +131,7 @@ test('crash between ledger append and index save is reconciled', () => {
     // before the key index and offsets were written.
     ledger.ingest(cfg, [f], { bucketFor });
     const keysDir = path.join(paths.stateDir(), 'keys');
-    const stateBefore = { v: 1, ledgerFile: ledger.ownLedgerFile(cfg), committed: 0, months: [], files: {} };
+    const stateBefore = { v: 2, ledgerFile: ledger.ownLedgerFile(cfg), committed: 0, months: [], files: {} };
     fs.rmSync(keysDir, { recursive: true, force: true });
     fs.writeFileSync(ledger.stateFile(), JSON.stringify(stateBefore));
     const r = ledger.ingest(cfg, [f], { bucketFor });
