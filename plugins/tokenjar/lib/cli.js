@@ -306,6 +306,10 @@ async function main(argv) {
       case 'status':
         out = cmdStatus(loaded, opts);
         break;
+      case 'query':
+        syncForReport(loaded.config);
+        out = JSON.stringify(report.queryJson(loaded.config), null, 1);
+        break;
       case 'sync': {
         const r = syncAll(loaded.config);
         out = r.locked ? 'Another tokenjar process is syncing; try again in a moment.' : `Synced: ${r.appended} new events (${Math.round(r.bytesRead / 1e6)} MB read).`;

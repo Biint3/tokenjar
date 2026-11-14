@@ -128,8 +128,9 @@ function snapshot(cfg) {
       for (const [b, slots] of Object.entries(buckets)) {
         const eff = ov || b;
         const target = byBucket[eff] || (byBucket[eff] = {});
-        const sess = bySession[sid] || (bySession[sid] = { slots: {}, buckets: new Set() });
+        const sess = bySession[sid] || (bySession[sid] = { slots: {}, buckets: new Set(), cwd: null });
         sess.buckets.add(eff);
+        if (!sess.cwd && entry.data.c && entry.data.c[sid]) sess.cwd = entry.data.c[sid];
         for (const [slot, v] of Object.entries(slots)) {
           acc.addVec(target[slot] || (target[slot] = acc.emptyVec()), v);
           acc.addVec(sess.slots[slot] || (sess.slots[slot] = acc.emptyVec()), v);

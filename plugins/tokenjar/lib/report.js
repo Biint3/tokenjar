@@ -117,7 +117,7 @@ function segment(cfg, { sessionId, cwd, color = false, now = new Date() }) {
   const snap = agg.snapshot(cfg);
   const { bucket } = budget.sessionBucket(cfg, snap, sessionId, cwd);
   const st = budget.bucketStatus(cfg, snap, bucket, now);
-  const paint = (t, c) => (color && c ? `\x1b[${{ green: 32, yellow: 33, red: 31, dim: 2 }[c]}m${t}\x1b[0m` : t);
+  const paint = (t, c) => (color && c && t ? `\x1b[${{ green: 32, yellow: 33, red: 31, dim: 2 }[c]}m${t}\x1b[0m` : t);
   if (st.limit === null) {
     return paint(`${bucket} · ${fmt.compact(st.used)} ${periods.noun(st.period)}`, 'dim');
   }
@@ -127,4 +127,82 @@ function segment(cfg, { sessionId, cwd, color = false, now = new Date() }) {
   return `${bucket} ${paint(`${barText}${fmt.pct(st.fraction)}`, LEVEL_COLOR[st.level])} · resets ${fmt.resetLabel(st.end, now)}${paint(tail, 'red')}`;
 }
 
-module.exports = { statusText, usageText, segment };
+/**
+ * Machine-readable summary for the spend skill: budgets, previous period,
+ * last 14 days per bucket, and per-project (session folder) totals.
+ * Only counts and folder names, never conversation content.
+ */
+function queryJson(cfg, opts = {}) {
+  const now = opts.now || new Date();
+  const snap = agg.snapshot(cfg);
+  const r = (x) => Math.round(x);
+  const bucketsOut = budget.allBucketNames(cfg, snap).map((name) => {
+    const st = budget.bucketStatus(cfg, snap, name, now);
+    const prev = periods.previous(st.period, st.bucket.reset_day, now);
+    const prevUsed = agg.sumSlots(snap.byBucket[name], cfg, agg.localDay(prev.start), agg.localDay(prev.end)).total;
+    const allTime = agg.sumSlots(snap.byBucket[name], cfg);
+    return {
+      bucket: name,
+      configured: !st.bucket.unconfigured,
+      period: st.period,
+      period_start: st.startDay,
+      resets: agg.localDay(st.end),
+      used: r(st.used),
+      limit: st.limit === null ? null : r(st.limit),
+      extended_by: r(st.extra),
+      percent: st.fraction === null ? null : Math.round(st.fraction * 1000) / 10,
+      remaining: st.remaining === null ? null : r(st.remaining),
+      mode: st.limit === null ? 'track' : st.mode,
+      blocking: st.blocking,
+      previous_period_used: r(prevUsed),
+      all_time: r(allTime.total),
+      all_time_raw: { input: allTime.vec[0], output: allTime.vec[1], cache_read: allTime.vec[2], cache_write: allTime.vec[3] + allTime.vec[4], responses: allTime.vec[5] },
+    };
+  });
+
+  const days = [];
+  for (let i = 13; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+    const from = agg.localDay(d);
+    const to = agg.localDay(new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1));
+    const row = { day: from };
+    for (const b of Object.keys(snap.byBucket)) {
+      const v = agg.sumSlots(snap.byBucket[b], cfg, from, to).total;
+      if (v) row[b] = r(v);
+    }
+    days.push(row);
+  }
+
+  const week = agg.localDay(startOfWeek(now));
+  const month = agg.localDay(new Date(now.getFullYear(), now.getMonth(), 1));
+  const projects = {};
+  for (const s of Object.values(snap.bySession)) {
+    const bk = require('./buckets');
+    const key = s.cwd ? bk.folderKey(s.cwd) : '(unknown folder)';
+    const folder = s.cwd ? bk.normalizePath(s.cwd) : key;
+    const p = projects[key] || (projects[key] = { folder, buckets: new Set(), sessions: 0, this_week: 0, this_month: 0, all_time: 0 });
+    s.buckets.forEach((b) => p.buckets.add(b));
+    p.sessions++;
+    p.this_week += agg.sumSlots(s.slots, cfg, week).total;
+    p.this_month += agg.sumSlots(s.slots, cfg, month).total;
+    p.all_time += agg.sumSlots(s.slots, cfg).total;
+  }
+  const projectList = Object.values(projects)
+    .map((p) => ({ ...p, buckets: [...p.buckets], this_week: r(p.this_week), this_month: r(p.this_month), all_time: r(p.all_time) }))
+    .sort((a, b) => b.all_time - a.all_time)
+    .slice(0, 25);
+
+  return {
+    tool: 'tokenjar',
+    generated: now.toISOString(),
+    metric: cfg.metric,
+    metric_meaning: acc.metricLabel(cfg.metric),
+    weights: cfg.metric === 'weighted' ? cfg.weights : undefined,
+    note: 'Budgets are self-imposed targets; they are not the Claude subscription quota. Calendar weeks in "projects" start Monday.',
+    buckets: bucketsOut,
+    last_14_days: days,
+    projects: projectList,
+  };
+}
+
+module.exports = { statusText, usageText, segment, queryJson };

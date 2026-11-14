@@ -31,7 +31,7 @@
     "SessionEnd": [
       {
         "hooks": [
-          { "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/tokenjar.js", "hook", "sync"], "timeout": 5 }
+          { "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/tokenjar.js", "hook", "sync"], "timeout": 3 }
         ]
       }
     ]

@@ -7,5 +7,6 @@
     "name": "tokenjar contributors"
   },
   "license": "MIT",
+  "icon": "./.claude-plugin/icon.png",
   "keywords": ["budget", "tokens", "usage", "statusline", "quota", "privacy"]
 }

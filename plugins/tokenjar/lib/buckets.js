@@ -78,4 +78,10 @@ function match(buckets, cwd) {
   return best;
 }
 
-module.exports = { compile, match, normalizePath };
+/** Key for grouping folders: case-folded where the filesystem is case-insensitive. */
+function folderKey(p) {
+  const n = normalizePath(p);
+  return CASE_INSENSITIVE ? n.toLowerCase() : n;
+}
+
+module.exports = { compile, match, normalizePath, folderKey };
