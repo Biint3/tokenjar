@@ -1,0 +1,11 @@
+{
+  "name": "tokenjar",
+  "displayName": "tokenjar",
+  "version": "0.1.0",
+  "description": "Token budgets per bucket (work, fun, creative...): tracks usage from local transcripts, shows progress, warns or blocks when a bucket is spent. 100% local.",
+  "author": {
+    "name": "tokenjar contributors"
+  },
+  "license": "MIT",
+  "keywords": ["budget", "tokens", "usage", "statusline", "quota", "privacy"]
+}

@@ -1,0 +1,16 @@
+{
+  "name": "tokenjar",
+  "description": "tokenjar: self-imposed token budgets per bucket for Claude Code. Runs 100% locally.",
+  "owner": {
+    "name": "tokenjar contributors"
+  },
+  "plugins": [
+    {
+      "name": "tokenjar",
+      "source": "./plugins/tokenjar",
+      "description": "Token budgets per bucket (work, fun, creative...) with status line, warnings and optional blocking. 100% local, no network, no telemetry.",
+      "category": "productivity",
+      "tags": ["budget", "tokens", "usage", "statusline"]
+    }
+  ]
+}

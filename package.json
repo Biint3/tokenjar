@@ -1,0 +1,12 @@
+{
+  "name": "tokenjar-marketplace",
+  "private": true,
+  "description": "Development scripts for the tokenjar Claude Code plugin. The plugin itself has no dependencies.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node test/run.js"
+  }
+}
