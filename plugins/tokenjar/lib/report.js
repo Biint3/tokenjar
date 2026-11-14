@@ -42,4 +42,14 @@ function statusText(cfg, opts = {}) {
   return lines.join('\n');
 }
 
-module.exports = { statusText };
+/** One-line status segment for the session's bucket (no budgets configured yet). */
+function segment(cfg, { sessionId, cwd, color = false }) {
+  const snap = agg.snapshot(cfg);
+  const bucket = (sessionId && snap.overrides[sessionId]) || require('./config').bucketForCwd(cfg, cwd);
+  const week = agg.localDay(startOfWeek(new Date()));
+  const used = agg.sumSlots(snap.byBucket[bucket], cfg, week).total;
+  const text = `${bucket} · ${fmt.compact(used)} this week`;
+  return color ? `\x1b[2m${text}\x1b[0m` : text;
+}
+
+module.exports = { statusText, segment };

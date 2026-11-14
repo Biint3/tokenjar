@@ -7,6 +7,7 @@ const ledger = require('./ledger');
 const transcript = require('./transcript');
 const paths = require('./paths');
 const report = require('./report');
+const statusline = require('./statusline');
 
 /** Bytes of transcript a single hook call may read (keeps hooks fast). */
 const HOOK_READ_BUDGET = 16 * 1024 * 1024;
@@ -60,6 +61,9 @@ async function runHook(event) {
     const input = readStdinJson();
     const { config: cfg } = loadConfig();
     switch (event) {
+      case 'session-start':
+        statusline.refreshShim();
+        break;
       case 'sync': // Stop, SubagentStop, SessionEnd
         if (input.transcript_path) syncSession(cfg, input.transcript_path);
         break;
@@ -72,7 +76,51 @@ async function runHook(event) {
   return 0;
 }
 
+// ----- status line -----------------------------------------------------------
+
+function readStdinRaw() {
+  try {
+    return process.stdin.isTTY ? '' : fs.readFileSync(0, 'utf8');
+  } catch {
+    return '';
+  }
+}
+
+async function runStatusline() {
+  setTimeout(() => process.exit(0), 4000).unref();
+  const raw = readStdinRaw();
+  let theirs = '';
+  let ours = '';
+  try {
+    theirs = statusline.runChained(raw);
+  } catch (err) {
+    log.warn('chained status line failed', err);
+  }
+  try {
+    let input = {};
+    try { input = raw.trim() ? JSON.parse(raw) : {}; } catch { /* render without session info */ }
+    const { config: cfg } = loadConfig();
+    // Small, non-blocking catch-up so the line reflects the latest message.
+    if (input.transcript_path) {
+      const files = transcript.sessionTranscripts(input.transcript_path);
+      ledger.ingest(cfg, files, { maxBytes: 4 * 1024 * 1024, lockWaitMs: 0, bucketFor: (c) => config.bucketForCwd(cfg, c) });
+    }
+    const cwd = (input.workspace && input.workspace.current_dir) || input.cwd || process.cwd();
+    ours = report.segment(cfg, { sessionId: input.session_id, cwd, color: !process.env.NO_COLOR });
+  } catch (err) {
+    log.error('status line failed', err);
+  }
+  process.stdout.write(statusline.combine(theirs, ours) + '\n');
+  return 0;
+}
+
 // ----- commands --------------------------------------------------------------
+
+function cmdStatuslineSetup(action, opts) {
+  if (action === 'install') return statusline.install({ force: Boolean(opts.force) });
+  if (action === 'uninstall') return statusline.uninstall();
+  return 'usage: /budget statusline install [--force] | uninstall';
+}
 
 function cmdStatus(cfg, opts) {
   syncAll(cfg);
@@ -82,6 +130,7 @@ function cmdStatus(cfg, opts) {
 async function main(argv) {
   const [cmd, ...args] = argv;
   if (cmd === 'hook') return runHook(args[0]);
+  if (cmd === 'statusline') return runStatusline();
 
   const { opts, rest } = parseArgs(args);
   const { config: cfg } = loadConfig();
@@ -99,6 +148,7 @@ async function main(argv) {
       case 'budget': {
         const sub = rest[0] || 'status';
         if (sub === 'status') out = cmdStatus(cfg, opts);
+        else if (sub === 'statusline') out = cmdStatuslineSetup(rest[1], opts);
         else out = `Unknown subcommand "${sub}". Try: /budget status`;
         break;
       }
