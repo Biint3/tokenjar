@@ -39,17 +39,52 @@ function ownLedgerFile(cfg) {
   return path.join(ledgerDir(cfg), `ledger-${paths.machineName(cfg && cfg.machine_name)}.jsonl`);
 }
 
-function allLedgerFiles(cfg) {
+const LEDGER_NAME = /^ledger-[a-z0-9._-]+\.jsonl$/;
+
+/**
+ * Ledger files to count, and the ones skipped as sync-tool copies.
+ * Sync tools create conflict copies ("ledger-x (conflicted copy).jsonl",
+ * "ledger-x.sync-conflict-...jsonl", "ledger-x-DESKTOP-1.jsonl") that would
+ * double count. Copies are caught by name where possible, and otherwise by
+ * header: several files with the same machine id are one ledger, and only the
+ * file whose name matches its header is read.
+ */
+function scanLedgerDir(cfg) {
   const dir = ledgerDir(cfg);
+  let names;
   try {
-    return fs.readdirSync(dir)
-      // Sync tools create conflict copies such as "ledger-x (conflicted copy).jsonl";
-      // those would double count, so only exact names are read.
-      .filter((n) => /^ledger-[a-z0-9._-]+\.jsonl$/.test(n))
-      .map((n) => path.join(dir, n));
+    names = fs.readdirSync(dir).filter((n) => /^ledger-.*\.jsonl$/i.test(n));
   } catch {
-    return [];
+    return { files: [], ignored: [] };
   }
+  const ignored = [];
+  const byId = new Map();
+  const files = [];
+  for (const n of names.sort()) {
+    if (!LEDGER_NAME.test(n) || /conflict/i.test(n)) {
+      ignored.push(n);
+      continue;
+    }
+    const file = path.join(dir, n);
+    const h = readHeader(file);
+    if (!h || typeof h.id !== 'string') {
+      files.push(file);
+      continue;
+    }
+    const group = byId.get(h.id) || [];
+    group.push({ n, file, h });
+    byId.set(h.id, group);
+  }
+  for (const group of byId.values()) {
+    const canonical = group.find((g) => g.n === `ledger-${g.h.name}.jsonl`) || group[0];
+    files.push(canonical.file);
+    for (const g of group) if (g !== canonical) ignored.push(g.n);
+  }
+  return { files, ignored };
+}
+
+function allLedgerFiles(cfg) {
+  return scanLedgerDir(cfg).files;
 }
 
 /** Iterate events in [from, to) of a ledger file. cb(event, lineStartOffset). Returns end offset. */
@@ -80,11 +115,73 @@ function forEachEvent(file, from, to, cb) {
   return offset;
 }
 
+// ----- machine identity (sync mode) ---------------------------------------
+//
+// Every ledger file starts with a header { t: "h", id, name, created }. The
+// id is random per machine (kept in the config dir), so two machines that
+// ended up with the same file name — same hostname — are detected instead of
+// silently overwriting each other through the sync tool.
+
+function machineIdFile() {
+  return path.join(paths.configDir(), 'machine.json');
+}
+
+function machineId() {
+  const existing = fsu.readJson(machineIdFile(), null);
+  if (existing && typeof existing.id === 'string') return existing.id;
+  const id = require('crypto').randomBytes(8).toString('hex');
+  try {
+    fsu.writeJsonAtomic(machineIdFile(), { id, created: new Date().toISOString() });
+  } catch (err) {
+    log.warn('could not save machine id', err);
+  }
+  return id;
+}
+
+/** First line of a ledger file, parsed, if it is a header. */
+function readHeader(file) {
+  try {
+    const fd = fs.openSync(file, 'r');
+    try {
+      const buf = Buffer.alloc(512);
+      const n = fs.readSync(fd, buf, 0, 512, 0);
+      const first = buf.subarray(0, n).toString('utf8').split('\n')[0];
+      const ev = JSON.parse(first);
+      return ev && ev.t === 'h' ? ev : null;
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return null;
+  }
+}
+
 function appendEvents(cfg, events) {
   if (!events.length) return;
   const file = ownLedgerFile(cfg);
   fsu.ensureDir(path.dirname(file));
-  fs.appendFileSync(file, events.map((e) => JSON.stringify(e)).join('\n') + '\n');
+  const st = fsu.statOrNull(file);
+  const lines = events.map((e) => JSON.stringify(e));
+  if (!st || st.size === 0) {
+    lines.unshift(JSON.stringify({ t: 'h', v: 1, id: machineId(), name: paths.machineName(cfg && cfg.machine_name), created: new Date().toISOString() }));
+  }
+  fs.appendFileSync(file, lines.join('\n') + '\n');
+}
+
+/** Ledger directory overview for /budget status and sync troubleshooting. */
+function info(cfg) {
+  const dir = ledgerDir(cfg);
+  const own = ownLedgerFile(cfg);
+  const scan = scanLedgerDir(cfg);
+  const files = scan.files.map((f) => {
+    const st = fsu.statOrNull(f);
+    const h = readHeader(f);
+    return { file: f, name: path.basename(f).replace(/^ledger-|\.jsonl$/g, ''), size: st ? st.size : 0, mtime: st ? st.mtime : null, header: h, own: path.resolve(f) === path.resolve(own) };
+  });
+  // Own file name, but someone else's id in the header: same machine name on two machines.
+  const ownHeader = readHeader(own);
+  const collision = Boolean(ownHeader && ownHeader.id !== machineId());
+  return { dir, own, files, ignored: scan.ignored, collision };
 }
 
 // ----- local state -------------------------------------------------------
@@ -364,6 +461,9 @@ module.exports = {
   appendEvents,
   ingest,
   recordEvent,
+  info,
+  readHeader,
+  machineId,
   reconcile,
   stateFile,
 };

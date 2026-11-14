@@ -75,8 +75,12 @@ function load(cfg) {
     const st = fsu.statOrNull(file);
     if (!st) continue;
     let entry = cache.files[file];
-    if (!entry || st.size < entry.offset) {
-      entry = { offset: 0, data: emptyFileData() };
+    // A file that shrank, or whose header changed (another machine rebuilt
+    // its ledger and the sync tool replaced it), is re-read from scratch.
+    const h = ledger.readHeader(file);
+    const fp = h ? `${h.id}|${h.created}` : '';
+    if (!entry || st.size < entry.offset || (entry.fp || '') !== fp) {
+      entry = { offset: 0, fp, data: emptyFileData() };
       cache.files[file] = entry;
       dirty = true;
     }

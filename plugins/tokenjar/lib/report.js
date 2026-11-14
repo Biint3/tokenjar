@@ -64,9 +64,33 @@ function statusText(cfg, opts = {}) {
     lines.push('No budgets.yaml yet: everything is tracked in one bucket. Run /budget init to create one.');
   }
   lines.push('');
-  const files = snap.ledgerFiles.length;
-  lines.push(`Ledger: ${ledger.ledgerDir(cfg)}${files > 1 ? ` (${files} machines)` : ''}`);
+  lines.push(...ledgerLines(cfg, now));
   return lines.join('\n');
+}
+
+function ago(date, now) {
+  const s = Math.max(0, (now - date) / 1000);
+  if (s < 90) return 'just now';
+  if (s < 5400) return `${Math.round(s / 60)} min ago`;
+  if (s < 129600) return `${Math.round(s / 3600)} h ago`;
+  return `${Math.round(s / 86400)} days ago`;
+}
+
+/** Footer about where the ledger lives and, in sync mode, which machines feed it. */
+function ledgerLines(cfg, now = new Date()) {
+  const inf = ledger.info(cfg);
+  const out = [`Ledger: ${inf.dir}`];
+  if (inf.files.length > 1 || cfg.ledger_dir) {
+    const machines = inf.files.map((f) => `${f.name}${f.own ? ' (this machine)' : ''}, updated ${f.mtime ? ago(f.mtime, now) : 'never'}`);
+    out.push(`Machines: ${machines.join('; ') || 'none yet'}`);
+  }
+  if (inf.collision) {
+    out.push(`WARNING: another machine writes ${require('path').basename(inf.own)} too (same machine name). Set a unique machine_name in budgets.yaml on one of them.`);
+  }
+  if (inf.ignored.length) {
+    out.push(`Ignored (sync conflict copies?): ${inf.ignored.join(', ')}. Delete them once the real files have synced.`);
+  }
+  return out;
 }
 
 /** Today / this week / this month / all time per bucket. */

@@ -104,6 +104,13 @@ function promptHook(input) {
     messages.push(`tokenjar: ${loaded.errors.length} problem(s) in ${loaded.file}: ${loaded.errors[0]}${loaded.errors.length > 1 ? ' (run /budget status for all)' : ''}.${how}`);
   }
 
+  if (cfg.ledger_dir) {
+    const inf = ledger.info(cfg);
+    if (inf.collision && enforce.firstNotice(sid, 'collision')) {
+      messages.push(`tokenjar: another machine also writes ${inf.own}. Give each machine a unique machine_name in budgets.yaml, or totals will be wrong.`);
+    }
+  }
+
   const snap = aggregate.snapshot(cfg);
   const { bucket } = budget.sessionBucket(cfg, snap, sid, input.cwd);
   const st = budget.bucketStatus(cfg, snap, bucket);

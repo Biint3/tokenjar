@@ -27,7 +27,7 @@ test('ingests a transcript and dedupes split/streamed lines (max wins)', () => {
     const r = ledger.ingest(cfg, [f], { bucketFor });
     assert.equal(r.appended, 3);
     assert.deepEqual(totals(), BASIC);
-    const evs = fs.readFileSync(ledger.ownLedgerFile(cfg), 'utf8').trim().split('\n').map(JSON.parse);
+    const evs = fs.readFileSync(ledger.ownLedgerFile(cfg), 'utf8').trim().split('\n').map(JSON.parse).filter((e) => e.t === 'u');
     assert.deepEqual(evs.map((e) => e.b), ['work', 'work', 'fun']);
     assert.ok(evs.every((e) => !('content' in e)));
   } finally {
