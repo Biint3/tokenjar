@@ -133,3 +133,25 @@ test('end to end: the status line records plan %, status shows the estimate and 
     sb.cleanup();
   }
 });
+
+test('panel command: JSON for the pane, and it records a plan reading passed with --plan', () => {
+  const sb = sandbox();
+  try {
+    sb.fixture('session-basic.jsonl');
+    fs.mkdirSync(sb.env.TOKENJAR_HOME, { recursive: true });
+    fs.writeFileSync(path.join(sb.env.TOKENJAR_HOME, 'budgets.yaml'), 'buckets:\n  work:\n    limit: 30% of plan\n');
+    const reset = Math.round(Date.now() / 1000) + 3 * 86400;
+    const planArg = JSON.stringify({ rate_limits: { seven_day: { used_percentage: 21, resets_at: reset } } });
+    const r = spawnSync(process.execPath, [CLI, 'panel', '--session', 'abc', '--cwd', sb.dir, `--plan=${planArg}`], { encoding: 'utf8', env: process.env });
+    const out = JSON.parse(r.stdout);
+    const work = out.buckets.find((b) => b.name === 'work');
+    assert.equal(work.mode, 'calibrating');
+    assert.equal(work.planPct, 30);
+    assert.equal(out.plan.weeklyPct, 21);
+    assert.equal(out.plan.needed, plan.MIN_POINTS);
+    assert.ok(out.session && typeof out.session.bucket === 'string');
+    assert.equal(plan.load().latest.weekly.pct, 21);
+  } finally {
+    sb.cleanup();
+  }
+});

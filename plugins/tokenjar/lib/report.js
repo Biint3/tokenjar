@@ -286,4 +286,50 @@ function queryJson(cfg, opts = {}) {
   };
 }
 
-module.exports = { statusText, usageText, segment, queryJson };
+/**
+ * Compact, display-ready data for the live tokenjar pane: every bucket with
+ * its progress, the session's bucket, and the plan figures. Counts only.
+ */
+function panelJson(cfg, { sessionId = null, cwd = null, now = new Date(), errors = [] } = {}) {
+  const snap = agg.snapshot(cfg);
+  const session = sessionId || cwd ? budget.sessionBucket(cfg, snap, sessionId, cwd || process.cwd()) : null;
+  const buckets = budget.allBucketNames(cfg, snap).map((name) => {
+    const st = budget.bucketStatus(cfg, snap, name, now);
+    return {
+      name,
+      period: periodLabel(st),
+      used: fmt.compact(st.used),
+      limit: st.limit === null ? null : fmt.compact(st.limit),
+      planPct: st.planPct,
+      fraction: st.fraction === null ? null : Math.round(st.fraction * 1000) / 1000,
+      percent: st.fraction === null ? null : fmt.pct(st.fraction),
+      left: st.remaining === null ? null : fmt.compact(Math.max(0, st.remaining)),
+      level: st.level,
+      mode: st.limit === null ? (st.calibrating ? 'calibrating' : 'track') : st.mode,
+      blocking: Boolean(st.blocking),
+      resets: fmt.resetLabel(st.end, now),
+      isDefault: name === cfg.default_bucket,
+      isSession: Boolean(session && session.bucket === name),
+    };
+  });
+  const { current: cur, calibration: cal, shares, claudeCodeTotal } = planInfo(cfg, snap, now);
+  return {
+    metric: acc.metricLabel(cfg.metric),
+    session: session ? { bucket: session.bucket, reason: session.reason || null } : null,
+    buckets,
+    plan: {
+      weeklyPct: cur && cur.weekly ? cur.weekly.pct : null,
+      weeklyResets: cur && cur.weekly ? timeLabel(cur.weekly.reset) : null,
+      fiveHourPct: cur && cur.fiveHour ? cur.fiveHour.pct : null,
+      perPct: cal.perPct ? fmt.compact(cal.perPct) : null,
+      points: cal.points,
+      needed: plan.MIN_POINTS,
+      shares: shares ? Object.entries(shares).sort((a, b) => b[1] - a[1]).map(([b, p]) => ({ bucket: b, pct: Math.round(p * 10) / 10 })) : null,
+      claudeCodePct: shares ? Math.round(claudeCodeTotal) : null,
+    },
+    errors,
+    generated: now.toISOString(),
+  };
+}
+
+module.exports = { statusText, usageText, segment, queryJson, panelJson };

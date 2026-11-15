@@ -186,6 +186,27 @@ function syncForReport(cfg) {
   return r.locked ? '(Another tokenjar process was syncing; numbers may lag by a moment.)\n' : '';
 }
 
+/**
+ * JSON for the live pane. `--plan=<json>` carries the plan windows the pane
+ * read from Claude Code, in the status line's `rate_limits` shape, so plan
+ * calibration also works where no status line is drawn (e.g. VS Code).
+ */
+function cmdPanel(loaded, opts) {
+  const cfg = loaded.config;
+  syncAll(cfg);
+  const snap = aggregate.snapshot(cfg);
+  if (typeof opts.plan === 'string') {
+    try {
+      plan.record(cfg, JSON.parse(opts.plan), { snap });
+    } catch (err) {
+      log.warn('panel: plan reading ignored', err);
+    }
+  }
+  const session = typeof opts.session === 'string' && !/^\$\{/.test(opts.session) ? opts.session : null;
+  const cwd = typeof opts.cwd === 'string' ? opts.cwd : null;
+  return JSON.stringify(report.panelJson(cfg, { sessionId: session, cwd, errors: loaded.errors || [] }));
+}
+
 function cmdStatus(loaded, opts) {
   const note = syncForReport(loaded.config);
   return note + report.statusText(loaded.config, {
@@ -318,6 +339,9 @@ async function main(argv) {
       case 'query':
         syncForReport(loaded.config);
         out = JSON.stringify(report.queryJson(loaded.config), null, 1);
+        break;
+      case 'panel':
+        out = cmdPanel(loaded, opts);
         break;
       case 'sync': {
         const r = syncAll(loaded.config);
