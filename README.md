@@ -44,6 +44,14 @@ macOS, Linux and Windows are supported.
 The first `/budget` reads all your existing transcripts once. With a lot of history this can take
 some seconds; after that only new data is read.
 
+**Updating:** `/plugin marketplace update tokenjar`, then start a new session. (Turn on auto-update for the
+`tokenjar` marketplace in `/plugin` to have this done for you.) Your `budgets.yaml` and usage history live in
+the tokenjar config folder, not in the plugin, so updates and reinstalls keep them.
+
+**Removing:** `/budget statusline uninstall` (puts back the status line you had before, if any), then
+`/plugin uninstall tokenjar@tokenjar` (and `tokenjar-pane@tokenjar`). Delete the config folder too if you
+want your history gone (see [Files](#files)).
+
 ## How it works
 
 1. **Ledger.** After each turn (Stop / SubagentStop / SessionEnd hooks) tokenjar reads the *new* part of
@@ -83,7 +91,9 @@ The weights are configurable, and you can switch to `metric: raw` (every token c
 ### Budgets as a share of your plan
 
 On Pro, Max and Ultra plans, Claude Code tells the **status line** how much of the plan's weekly (and
-5-hour) limit is used. Hooks don't get this, so it needs the tokenjar status line installed. Each time the weekly %
+5-hour) limit is used, and it gives the same numbers to mods. Hooks don't get them, so this needs either the
+tokenjar status line or the [tokenjar pane](#live-pane-optional) (the pane also works in the VS Code panel,
+where the status line isn't drawn). Each time the weekly %
 moves, tokenjar notes how many tokens were used meanwhile and learns roughly **how many tokens equal 1% of
 your weekly plan**. It needs at least 2 points of movement to give an estimate. Then:
 
@@ -273,15 +283,29 @@ time. Overrides and extensions are ledger entries too, so they apply on every ma
 
 ## Where it works
 
-| surface | tracking, warnings, blocking, `/budget` | status line |
-| --- | --- | --- |
-| Claude Code in a terminal | yes | yes |
-| VS Code extension | yes (verified: shared `~/.claude`, transcripts and plugins) | the extension panel has its own status display; run `claude` in the integrated terminal to see the tokenjar line |
-| JetBrains plugin | expected (it runs the CLI in the IDE terminal), not verified | expected |
-| Desktop app, local sessions | expected (same `~/.claude`), not verified | not verified |
-| Claude chat apps, cloud / web sessions | no: no local transcripts | no |
+| surface | tracking, warnings, blocking, `/budget` | status line | live pane |
+| --- | --- | --- | --- |
+| Claude Code in a terminal | yes | yes | yes, from 110 columns (144 to open by itself) |
+| VS Code extension | yes (verified: shared `~/.claude`, transcripts and plugins) | the extension panel has its own status display; run `claude` in the integrated terminal to see the tokenjar line | yes (verified) |
+| JetBrains plugin | expected (it runs the CLI in the IDE terminal), not verified | expected | expected, not verified |
+| Desktop app, local sessions | expected (same `~/.claude`), **not verified** | not verified | not verified |
+| Claude chat apps, cloud / web sessions | no: no local transcripts | no | no |
 
 Usage from all local surfaces lands in the same `~/.claude/projects/`, so one ledger covers them all.
+
+## Known limits
+
+* **Desktop app not tested.** Its local sessions share `~/.claude`, so tokenjar should work there, but
+  nobody has checked yet. Reports welcome.
+* **The pane needs a Claude Code version with mods** (plugins with function hooks, early access). On a
+  version without them the pane plugin won't load; tokenjar itself is unaffected. The mod API may change
+  between releases.
+* **Plan % is an estimate, per machine.** It needs at least 2 points of movement in your weekly plan % before
+  `% of plan` limits get a number, and it counts usage tokenjar can't see (claude.ai, cloud sessions, other
+  machines). Plan readings aren't synced between machines, so each one calibrates on its own.
+* **`/budget set` moves a whole session**, by its last folder; it doesn't split a session between buckets.
+* **Budgets are local.** Nothing stops you from going over in a place tokenjar doesn't run (cloud sessions,
+  a machine without the plugin). `mode: block` only blocks local Claude Code sessions.
 
 ## Files
 
