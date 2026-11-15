@@ -151,6 +151,47 @@ buckets:
 * Also supported: `weights`, `model_multipliers` (scale the weighted metric per model), `warn_at` and `mode`
   at the top level as defaults, `statusline.bar_width`. A `budgets.json` with the same structure works too.
 
+### Which bucket does a session go to?
+
+tokenjar never looks at what you talk about, only at **where** a session runs. In order:
+
+1. **`/budget set <bucket>`** for that session, if you used it.
+2. **Folder rules**: the session's start folder is matched against each bucket's `paths`. The most
+   specific match wins.
+3. **`default_bucket`**: everything else.
+
+A bucket without `paths` (say, `creative` with only a limit) gets nothing from folder rules. Sessions only
+land there through `/budget set`.
+
+**Folder or `/budget set`?** If a kind of work has a home, give it a folder:
+
+```yaml
+  creative:
+    paths: [~/writing/**, ~/projects/stories]
+```
+
+Every session started there counts as `creative` automatically, including new sessions after `/clear`. Use
+`/budget set` for the exceptions: a one-off creative session started in your home folder, or a work
+session in a folder that is normally personal.
+
+**How long does `/budget set` last?** It is stored with the session id, in the ledger (so it syncs too):
+
+| you do | the bucket you set |
+| --- | --- |
+| keep chatting, `/compact`, auto-compact | **kept** (same session) |
+| `/clear`, or start a new session | **not kept**: the new session follows folder rules again. Run `/budget set` again if needed |
+| `/budget set auto` | removed: back to folder rules |
+
+Usage before a `/clear` stays in the bucket you set. `/budget set` also moves what the session already
+used, so you can run it at any point in a session. Setting a bucket name that is not in `budgets.yaml` works,
+but that bucket is tracked without a limit (tokenjar tells you so).
+
+**After changing folder rules**, run `/budget rebucket` to preview which past sessions would move, and
+`/budget rebucket --apply` to move them. Sessions you placed with `/budget set` stay where you put them.
+
+**Common mistake:** every bucket must be indented under `buckets:`. A bucket name at the start of the
+line is read as an unknown top-level setting; `/budget status` reports it as `unknown setting (ignored)`.
+
 ## Commands
 
 | command | what it does |
