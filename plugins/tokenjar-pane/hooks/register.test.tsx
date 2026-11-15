@@ -40,11 +40,16 @@ function engine(on: (event: string, hook: (...a: any[]) => unknown) => void, run
     runs.push([...e.argv])
     const isPanel = e.argv[2] === 'panel'
     const isAdd = e.argv[3] === 'add'
+    const isRename = e.argv[3] === 'rename'
     const stdout = isPanel
       ? JSON.stringify(data)
       : isAdd && e.argv[4] === 'writing'
         ? 'Added bucket "writing" for /work/app.'
-        : `answer to ${e.argv.slice(3, 6).join(' ')}\nsecond line`
+        : isRename && e.argv[5] === 'job'
+          ? `Renamed "${e.argv[4]}" to "job" in budgets.yaml.\nIts past usage moved with it.`
+          : isRename && e.argv[5] === 'work'
+            ? `"${e.argv[4]}"'s usage now counts as "work".`
+            : `answer to ${e.argv.slice(3, 6).join(' ')}\nsecond line`
     return { value: { exitCode: 0, stdout, stderr: '' } }
   })
 }
@@ -161,9 +166,46 @@ test('limits over the whole plan are flagged, and the form suggests what is left
   const ui = await $.ui.mount({ ...PANE, surface: 'vscode' })
   expect((await ui.find({ type: 'Text', text: /^⚠ Limits add up to 115%/ }))?.text).toContain('More than the whole plan.')
   // A bucket that has usage but is no longer in budgets.yaml says how to keep it.
-  expect((await ui.find({ type: 'Text', text: /not in budgets\.yaml/ }))?.text).toContain('/budget rename oldwork <new name>')
+  expect((await ui.find({ type: 'Text', text: /not in budgets\.yaml/ }))?.text).toContain('"rename" moves its usage')
   await ui.press({ key: 'new' })
   expect((await ui.find({ key: 'f-limit' }))?.props.placeholder).toContain('plan fully allocated')
+  await ui.unmount()
+})
+
+test('rename: inline form per bucket, and stranded usage can be moved into an existing bucket', { timeoutMs: 30_000 }, async ($, on) => {
+  const runs: string[][] = []
+  const orphan = { ...DATA.buckets[1], name: 'oldwork', planPct: null, mode: 'track', isDefault: false, configured: false }
+  engine(on as never, runs, { ...DATA, buckets: [...DATA.buckets, orphan] })
+  await $.session.start({ cwd: '/work/app', surface: 'vscode', isInteractive: true })
+  const ui = await $.ui.mount({ ...PANE, surface: 'vscode' })
+
+  // Typing a new name: runs /budget rename, and the form closes on success.
+  expect(await ui.find({ key: 'r-to' })).toBeUndefined()
+  await ui.press({ key: 'ren-work' })
+  expect(await ui.find({ key: 'r-pick' })).toBeUndefined() // a normal bucket only gets the name field
+  await ui.input({ key: 'r-to', text: 'job', kind: 'change' })
+  await ui.press({ key: 'r-go' })
+  expect(runs.some(a => a.slice(2, 6).join(' ') === 'budget rename work job')).toBe(true)
+  expect((await ui.find({ type: 'Text', text: /^Renamed/ }))?.text).toBe('Renamed "work" to "job" in budgets.yaml.')
+  expect(await ui.find({ key: 'r-to' })).toBeUndefined()
+
+  // A refused rename keeps the form open; pressing rename again closes it.
+  await ui.press({ key: 'ren-fun' })
+  await ui.input({ key: 'r-to', text: 'x y', kind: 'change' })
+  await ui.press({ key: 'r-go' })
+  expect(await ui.find({ key: 'r-to' })).toBeDefined()
+  await ui.press({ key: 'ren-fun' })
+  expect(await ui.find({ key: 'r-to' })).toBeUndefined()
+
+  // Usage left under an old name: the row says so, and the form offers the existing buckets.
+  expect((await ui.find({ type: 'Text', text: /not in budgets\.yaml/ }))?.text).toContain('"rename" moves its usage')
+  await ui.press({ key: 'ren-oldwork' })
+  const pick = await ui.find({ key: 'r-pick' })
+  expect((pick?.props.options as { value: string }[]).map(o => o.value)).toEqual(['', 'work', 'fun'])
+  await ui.select({ key: 'r-pick', value: 'work' })
+  await ui.press({ key: 'r-go' })
+  expect(runs.some(a => a.slice(2, 6).join(' ') === 'budget rename oldwork work')).toBe(true)
+  expect(await ui.find({ key: 'r-pick' })).toBeUndefined()
   await ui.unmount()
 })
 

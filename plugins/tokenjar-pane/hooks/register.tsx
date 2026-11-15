@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, SessionRateLimit } from 'claude-code'
 
-import type { BucketDraft, PanelBucket, PanelData, PanelView } from '../types'
+import type { BucketDraft, PanelBucket, PanelData, PanelView, RenameDraft } from '../types'
 
 // The pane reads from and acts through the tokenjar CLI. Everything stays on
 // this machine: it runs `node <tokenjar config>/cli.js ...` and draws what that
@@ -21,6 +21,14 @@ const view = atom(
 
 const EMPTY_DRAFT: BucketDraft = { open: false, name: '', paths: '', limit: '', period: 'weekly', reset: '', mode: 'warn' }
 const draft = atom({ plugin: 'tokenjar-pane', key: 'draft' } as const, EMPTY_DRAFT, { shape: 'draft-1' })
+
+const NO_RENAME: RenameDraft = { bucket: null, to: '' }
+const renaming = atom({ plugin: 'tokenjar-pane', key: 'renaming' } as const, NO_RENAME, { shape: 'rename-1' })
+
+/** A bucket whose usage is stranded under an old name: not in the file, or a default_bucket that isn't listed. */
+function stranded(b: PanelBucket): boolean {
+  return !b.configured || Boolean(b.unlisted)
+}
 
 /** Plan windows from Claude Code, in the status line's `rate_limits` shape tokenjar reads. */
 function planArg(limits: readonly SessionRateLimit[]): string | null {
@@ -56,8 +64,8 @@ function planColor(pct: number): 'success' | 'warning' | 'error' {
 function detail(b: PanelBucket): string {
   if (b.limit !== null) return `${b.used} of ${b.limit} · ${b.left} left · ${b.blocking ? 'BLOCKED' : b.mode}`
   if (b.mode === 'calibrating') return `${b.used} · limit ${b.planPct}% of plan once calibrated`
-  if (!b.configured) return `${b.used} · not in budgets.yaml · renamed it? /budget rename ${b.name} <new name>`
-  if (b.unlisted) return `${b.used} · default_bucket, but not listed under buckets · renamed it? /budget rename ${b.name} <new name>`
+  if (!b.configured) return `${b.used} · not in budgets.yaml · renamed it? "rename" moves its usage to the new name`
+  if (b.unlisted) return `${b.used} · default_bucket, but not listed under buckets · renamed it? "rename" moves its usage and fixes default_bucket`
   return `${b.used} · no limit (tracked)`
 }
 
@@ -169,6 +177,25 @@ async function createBucket($: EngineInterface) {
   if (notice.startsWith('Added bucket')) await update($, draft, () => EMPTY_DRAFT)
 }
 
+async function openRename($: EngineInterface, bucket: string) {
+  await update($, renaming, r => (r.bucket === bucket ? NO_RENAME : { bucket, to: '' }))
+}
+
+async function setRenameTo($: EngineInterface, to: string) {
+  await update($, renaming, r => ({ ...r, to }))
+}
+
+async function closeRename($: EngineInterface) {
+  await update($, renaming, () => NO_RENAME)
+}
+
+async function renameBucket($: EngineInterface) {
+  const r = await read($, renaming)
+  if (!r.bucket) return
+  const notice = await act($, ['rename', r.bucket, r.to.trim()])
+  if (notice.startsWith('Renamed') || notice.includes('now counts as')) await update($, renaming, () => NO_RENAME)
+}
+
 async function refreshNow($: EngineInterface) {
   await update($, view, v => ({ ...v, notice: null }))
   await refresh($)
@@ -201,6 +228,7 @@ export const register: Register = on => {
     const { Box, Text, Button, Input, Select } = $.ui.resolve(e)
     const { data, problem, updatedAt, notice } = await read($, view)
     const form = await read($, draft)
+    const ren = await read($, renaming)
 
     if (!data) {
       return (
@@ -265,8 +293,34 @@ export const register: Register = on => {
                   onPress={() => extendBucket($, b.name, b.extendBy ?? '')}
                 />
               )}
+              <Button
+                key={`ren-${b.name}`}
+                label="rename"
+                dimColor={!stranded(b)}
+                variant={stranded(b) ? 'primary' : undefined}
+                onPress={() => openRename($, b.name)}
+              />
             </Box>
             <Text dimColor>{`    ${detail(b)}`}</Text>
+            {ren.bucket === b.name && (
+              <Box key={`ren-form-${b.name}`} flexDirection="column" borderStyle="round" paddingX={1}>
+                <Text weight="bold">{`Rename ${b.name}, keeping its usage`}</Text>
+                <Input key="r-to" label="new name" placeholder="e.g. electrical" value={ren.to} autoFocus
+                  onInput={v => setRenameTo($, v)} onSubmit={() => renameBucket($)} submitLabel="rename" />
+                {stranded(b) && (
+                  <Select key="r-pick" label="or into " value={data.buckets.some(x => x.name === ren.to) ? ren.to : ''}
+                    options={[
+                      { value: '', label: 'pick a bucket…' },
+                      ...data.buckets.filter(x => x.name !== b.name && !stranded(x)).map(x => ({ value: x.name })),
+                    ]}
+                    onSelect={v => setRenameTo($, v)} />
+                )}
+                <Box flexDirection="row" gap={1}>
+                  <Button key="r-go" label="Rename" variant="primary" onPress={() => renameBucket($)} />
+                  <Button key="r-cancel" label="Cancel" dimColor onPress={() => closeRename($)} />
+                </Box>
+              </Box>
+            )}
           </Box>
         ))}
         {data.allocation?.text && (

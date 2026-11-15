@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.0 (tokenjar-pane)
+
+- A `rename` button on every bucket opens an inline form that renames it and keeps its usage. On usage left
+  under an old name (renamed by hand), it is highlighted and offers the existing buckets to move it into
+
 ## 0.4.0 (tokenjar) / 0.2.1 (tokenjar-pane)
 
 - `/budget rename <old> <new>` renames a bucket and keeps its history: past usage, `/budget set` choices

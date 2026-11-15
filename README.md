@@ -266,6 +266,7 @@ It opens by itself when the window is wide enough; `/budget-pane` opens it on de
 | `+5M` | on a bucket at its warn level or over: a one-off extension of about 25% of its limit |
 | `↻ refresh` | update now |
 | `＋ new bucket` | a small form (name, folders, limit, period, reset day, mode) that adds a bucket to `budgets.yaml` |
+| `rename` | on every bucket: a small form to rename it and keep its usage (same as `/budget rename`). On a bucket whose usage is left under an old name it is highlighted, and you can also pick the existing bucket to move the usage into |
 | `✎ edit budgets` | open `budgets.yaml` (in VS Code when you're in VS Code, else your default app) |
 
 * **Plan % without the status line.** The pane receives the plan's weekly and 5-hour % from Claude Code

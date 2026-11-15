@@ -65,8 +65,14 @@ export type BucketDraft = {
   mode: string
 }
 
+/** The inline rename form on one bucket's row (bucket null: closed). */
+export type RenameDraft = {
+  bucket: string | null
+  to: string
+}
+
 declare module 'claude-code' {
   interface PluginState {
-    'tokenjar-pane': { view: Shaped<PanelView>; draft: Shaped<BucketDraft> }
+    'tokenjar-pane': { view: Shaped<PanelView>; draft: Shaped<BucketDraft>; renaming: Shaped<RenameDraft> }
   }
 }

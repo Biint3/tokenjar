@@ -1,6 +1,6 @@
 {
   "name": "tokenjar-pane",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Live tokenjar budgets in a pane beside the chat, with buttons to switch bucket, extend and refresh. Needs the tokenjar plugin. 100% local.",
   "author": {
     "name": "Biint3"
