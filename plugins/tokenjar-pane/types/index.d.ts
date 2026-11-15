@@ -14,6 +14,8 @@ export type PanelBucket = {
   isDefault: boolean
   isSession: boolean
   configured: boolean
+  /** The default_bucket, named but not listed under buckets (often a rename that missed default_bucket). */
+  unlisted?: boolean
   extendBy: string | null
 }
 

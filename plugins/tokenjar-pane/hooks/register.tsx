@@ -56,6 +56,8 @@ function planColor(pct: number): 'success' | 'warning' | 'error' {
 function detail(b: PanelBucket): string {
   if (b.limit !== null) return `${b.used} of ${b.limit} · ${b.left} left · ${b.blocking ? 'BLOCKED' : b.mode}`
   if (b.mode === 'calibrating') return `${b.used} · limit ${b.planPct}% of plan once calibrated`
+  if (!b.configured) return `${b.used} · not in budgets.yaml · renamed it? /budget rename ${b.name} <new name>`
+  if (b.unlisted) return `${b.used} · default_bucket, but not listed under buckets · renamed it? /budget rename ${b.name} <new name>`
   return `${b.used} · no limit (tracked)`
 }
 

@@ -200,6 +200,20 @@ but that bucket is tracked without a limit (tokenjar tells you so).
 **After changing folder rules**, run `/budget rebucket` to preview which past sessions would move, and
 `/budget rebucket --apply` to move them. Sessions you placed with `/budget set` stay where you put them.
 
+**Renaming a bucket.** Usage is recorded under the bucket's name, so if you only change the name in
+`budgets.yaml`, the new name starts at 0 and the old name keeps the history. Use
+
+```text
+/budget rename <old> <new>
+```
+
+It renames the bucket in `budgets.yaml` (and `default_bucket`, if that named it), and moves the bucket's
+past usage, `/budget set` choices and extensions to the new name, on every machine that shares the ledger.
+Already renamed it by hand? Run the same command afterwards: it moves the usage and fixes a
+`default_bucket` that still has the old name. `/budget status` and the pane point out a bucket that has
+usage but is no longer in the file. Undo with `/budget rename <new> <old>`. A rename covers usage up to the
+day you run it, so if you later reuse the old name for a new bucket, that one starts fresh.
+
 **Common mistake:** every bucket must be indented under `buckets:`. A bucket name at the start of the
 line is read as an unknown top-level setting; `/budget status` reports it as `unknown setting (ignored)`.
 
@@ -213,6 +227,7 @@ line is read as an unknown top-level setting; `/budget status` reports it as `un
 | `/budget usage` | today / this week / this month / all time per bucket |
 | `/budget rebucket [--apply]` | after changing folder rules, re-file past sessions (explicit `set`s are kept) |
 | `/budget add <name> [--path <folder>] [--limit 20M] [--period weekly] [--reset mon] [--mode warn]` | add a bucket to `budgets.yaml`, leaving the rest of the file (and its comments) as it is. `--limit` also takes `"25% of plan"` |
+| `/budget rename <old> <new>` | rename a bucket and keep its usage (also after renaming it by hand) |
 | `/budget edit` | open `budgets.yaml` in your editor |
 | `/budget init` | create `budgets.yaml` from the example |
 | `/budget statusline install` / `uninstall` | add or remove the status line |

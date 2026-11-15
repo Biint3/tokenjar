@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0 (tokenjar) / 0.2.1 (tokenjar-pane)
+
+- `/budget rename <old> <new>` renames a bucket and keeps its history: past usage, `/budget set` choices
+  and extensions move to the new name (recorded in the ledger, so it applies on synced machines too). It
+  also works after renaming by hand, and updates `default_bucket` when that named the old bucket
+- `/budget status` and the pane point out a bucket that has usage but is no longer in `budgets.yaml`, and a
+  `default_bucket` that is not listed under `buckets`
+
 ## 0.3.0 (tokenjar) / 0.2.0 (tokenjar-pane)
 
 - New optional `tokenjar-pane` plugin: a live pane beside the chat with every bucket, plan weekly / 5-hour

@@ -48,6 +48,18 @@ function statusText(cfg, opts = {}) {
   lines.push('');
   lines.push(fmt.table(['bucket', 'period', 'used', 'limit', 'progress', 'left', 'resets', 'mode'], rows));
   lines.push('* default bucket for folders that match no rule');
+  const orphans = names.filter((n) => (!cfg.buckets[n] || cfg.buckets[n].unconfigured) && Object.keys(snap.byBucket[n] || {}).length);
+  if (orphans.length) {
+    lines.push('');
+    lines.push(`Not in budgets.yaml but has usage: ${orphans.join(', ')}. If you renamed a bucket, move its usage to the new name with`);
+    lines.push(`  /budget rename ${orphans[0]} <new name>`);
+  }
+  const def = cfg.buckets[cfg.default_bucket];
+  if (def && def.implicit && cfg.bucketList.some((b) => !b.implicit)) {
+    lines.push('');
+    lines.push(`default_bucket "${cfg.default_bucket}" is not listed under buckets, so folders that match no rule go to a bucket with no limit.`);
+    lines.push(`  Renamed it? /budget rename ${cfg.default_bucket} <new name> moves its usage and fixes default_bucket.`);
+  }
 
   if (opts.session || opts.cwd) {
     const sb = budget.sessionBucket(cfg, snap, opts.session, opts.cwd);
@@ -335,6 +347,7 @@ function panelJson(cfg, { sessionId = null, cwd = null, now = new Date(), errors
       isDefault: name === cfg.default_bucket,
       isSession: Boolean(session && session.bucket === name),
       configured: !st.bucket.unconfigured,
+      unlisted: Boolean(st.bucket.implicit) && cfg.bucketList.some((b) => !b.implicit),
       extendBy: st.limit && !st.bucket.unconfigured ? enforce.suggestExtend(st.bucket.limit || st.baseLimit) : null,
     };
   });

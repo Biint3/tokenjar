@@ -1,7 +1,7 @@
 ---
 name: budget
-description: tokenjar token budgets. Show status, set this session's bucket, extend a bucket for the current period, re-file past sessions, set up the status line.
-argument-hint: "[status | set <bucket> | extend <bucket> <amount> | usage | rebucket | init | statusline install | help]"
+description: tokenjar token budgets. Show status, set this session's bucket, extend a bucket for the current period, re-file past sessions, add or rename buckets, set up the status line.
+argument-hint: "[status | set <bucket> | extend <bucket> <amount> | usage | rebucket | add <name> | rename <old> <new> | edit | init | statusline install | help]"
 disable-model-invocation: true
 ---
 

@@ -9,7 +9,7 @@ const fsu = require('./fsutil');
 const ledger = require('./ledger');
 const acc = require('./accounting');
 
-const CACHE_VERSION = 3;
+const CACHE_VERSION = 4;
 
 function cacheFile() {
   return path.join(paths.stateDir(), 'agg.json');
@@ -32,7 +32,7 @@ function localDay(ts) {
 }
 
 function emptyFileData() {
-  return { s: {}, o: {}, x: [], c: {} };
+  return { s: {}, o: {}, x: [], c: {}, r: [] };
 }
 
 function foldEvent(data, ev) {
@@ -56,6 +56,8 @@ function foldEvent(data, ev) {
     if (!prev || String(ev.ts) >= String(prev.ts)) data.o[ev.s] = { b: ev.b || null, ts: ev.ts, why: ev.why || 'set' };
   } else if (ev.t === 'x' && typeof ev.b === 'string' && Number.isFinite(ev.amt)) {
     data.x.push({ b: ev.b, amt: ev.amt, ps: ev.ps, ts: ev.ts });
+  } else if (ev.t === 'r' && typeof ev.from === 'string' && typeof ev.to === 'string' && ev.from !== ev.to) {
+    (data.r || (data.r = [])).push({ from: ev.from, to: ev.to, ts: ev.ts });
   }
 }
 
@@ -104,7 +106,45 @@ function load(cfg) {
 }
 
 /**
- * Merge all ledger files into one view:
+ * Bucket renames from every ledger file, in time order. A rename applies to
+ * what was recorded up to it: events by their timestamp, usage by its day
+ * (usage is kept per day; the whole day of the rename moves, so sessions
+ * running at that moment follow). A name reused later for a new bucket starts
+ * fresh, renaming back (a -> b, later b -> a) works, and chains (a -> b -> c)
+ * follow through.
+ *   at(name, ts)  - current name for an event recorded at ISO time ts
+ *   onDay(name, day) - current name for usage recorded on local day YYYY-MM-DD
+ */
+function renamer(cache) {
+  const list = [];
+  for (const entry of Object.values(cache.files)) {
+    for (const r of entry.data.r || []) if (typeof r.ts === 'string' && !Number.isNaN(Date.parse(r.ts))) list.push({ ...r, day: localDay(r.ts) });
+  }
+  list.sort((a, b) => a.ts.localeCompare(b.ts));
+  const walk = (name, upTo) => {
+    let n = name;
+    for (const r of list) if (n === r.from && upTo(r)) n = r.to;
+    return n;
+  };
+  return {
+    list,
+    at: (name, ts) => (list.length && name ? walk(name, (r) => String(ts || '') <= r.ts) : name),
+    onDay: (name, day) => (list.length && name ? walk(name, (r) => day <= r.day) : name),
+  };
+}
+
+function latestOverrides(cache) {
+  const overrides = {};
+  for (const entry of Object.values(cache.files)) {
+    for (const [sid, o] of Object.entries(entry.data.o)) {
+      if (!overrides[sid] || String(o.ts) >= String(overrides[sid].ts)) overrides[sid] = o;
+    }
+  }
+  return overrides;
+}
+
+/**
+ * Merge all ledger files into one view (bucket renames applied throughout):
  *   overrides: sid -> bucket|null (latest wins across machines)
  *   extends:   [{ b, amt, ps }]
  *   byBucket:  bucket -> { 'YYYY-MM-DD|model': vec }   (overrides applied)
@@ -112,26 +152,25 @@ function load(cfg) {
  */
 function snapshot(cfg) {
   const cache = load(cfg);
-  const overrides = {};
+  const rn = renamer(cache);
+  const overrides = latestOverrides(cache);
   const extendsList = [];
   for (const entry of Object.values(cache.files)) {
-    for (const [sid, o] of Object.entries(entry.data.o)) {
-      if (!overrides[sid] || String(o.ts) >= String(overrides[sid].ts)) overrides[sid] = o;
-    }
-    extendsList.push(...entry.data.x);
+    for (const x of entry.data.x) extendsList.push({ ...x, b: rn.at(x.b, x.ts) });
   }
   const byBucket = {};
   const bySession = {};
   for (const entry of Object.values(cache.files)) {
     for (const [sid, buckets] of Object.entries(entry.data.s)) {
-      const ov = overrides[sid] && overrides[sid].b;
+      const o = overrides[sid];
+      const ov = o && o.b ? rn.at(o.b, o.ts) : null;
+      const sess = bySession[sid] || (bySession[sid] = { slots: {}, buckets: new Set(), cwd: null });
+      if (!sess.cwd && entry.data.c && entry.data.c[sid]) sess.cwd = entry.data.c[sid];
       for (const [b, slots] of Object.entries(buckets)) {
-        const eff = ov || b;
-        const target = byBucket[eff] || (byBucket[eff] = {});
-        const sess = bySession[sid] || (bySession[sid] = { slots: {}, buckets: new Set(), cwd: null });
-        sess.buckets.add(eff);
-        if (!sess.cwd && entry.data.c && entry.data.c[sid]) sess.cwd = entry.data.c[sid];
         for (const [slot, v] of Object.entries(slots)) {
+          const eff = ov || rn.onDay(b, slot.slice(0, slot.indexOf('|')));
+          const target = byBucket[eff] || (byBucket[eff] = {});
+          sess.buckets.add(eff);
           acc.addVec(target[slot] || (target[slot] = acc.emptyVec()), v);
           acc.addVec(sess.slots[slot] || (sess.slots[slot] = acc.emptyVec()), v);
         }
@@ -139,8 +178,8 @@ function snapshot(cfg) {
     }
   }
   const ov = {};
-  for (const [sid, o] of Object.entries(overrides)) ov[sid] = o.b;
-  return { overrides: ov, extends: extendsList, byBucket, bySession, ledgerFiles: Object.keys(cache.files) };
+  for (const [sid, o] of Object.entries(overrides)) ov[sid] = o.b ? rn.at(o.b, o.ts) : o.b;
+  return { overrides: ov, extends: extendsList, byBucket, bySession, renames: rn.list, ledgerFiles: Object.keys(cache.files) };
 }
 
 /** Sum slots whose day is in [fromDay, toDay) under the configured metric. */
@@ -165,18 +204,21 @@ function sumSlots(slots, cfg, fromDay, toDay) {
 function ownSessions(cfg) {
   const cache = load(cfg);
   const own = cache.files[ledger.ownLedgerFile(cfg)];
-  const overrides = {};
-  for (const entry of Object.values(cache.files)) {
-    for (const [sid, o] of Object.entries(entry.data.o)) {
-      if (!overrides[sid] || String(o.ts) >= String(overrides[sid].ts)) overrides[sid] = o;
-    }
-  }
+  const rn = renamer(cache);
+  const overrides = latestOverrides(cache);
   const out = {};
   if (!own) return out;
   for (const [sid, buckets] of Object.entries(own.data.s)) {
-    out[sid] = { buckets: Object.keys(buckets), cwd: (own.data.c || {})[sid] || null, override: overrides[sid] || null };
+    const o = overrides[sid];
+    const names = new Set();
+    for (const [b, slots] of Object.entries(buckets)) for (const slot of Object.keys(slots)) names.add(rn.onDay(b, slot.slice(0, slot.indexOf('|'))));
+    out[sid] = {
+      buckets: [...names],
+      cwd: (own.data.c || {})[sid] || null,
+      override: o ? { ...o, b: o.b ? rn.at(o.b, o.ts) : o.b } : null,
+    };
   }
   return out;
 }
 
-module.exports = { load, snapshot, sumSlots, localDay, foldEvent, cacheFile, ownSessions };
+module.exports = { load, snapshot, renamer, sumSlots, localDay, foldEvent, cacheFile, ownSessions };

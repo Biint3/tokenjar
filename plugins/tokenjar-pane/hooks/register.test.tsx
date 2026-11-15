@@ -154,11 +154,14 @@ test('new bucket form: fill in, create, and the form closes on success', { timeo
 })
 
 test('limits over the whole plan are flagged, and the form suggests what is left', { timeoutMs: 30_000 }, async ($, on) => {
-  const over = { ...DATA, allocation: { total: 115, over: true, text: 'Limits add up to 115% of the weekly plan: work 90%, fun 25%.', unknown: [] } }
+  const orphan = { name: 'oldwork', period: 'weekly (mon)', used: '4M', limit: null, planPct: null, fraction: null, percent: null, left: null, level: 'none', mode: 'track', blocking: false, resets: 'Mon', isDefault: false, isSession: false, configured: false, extendBy: null }
+  const over = { ...DATA, buckets: [...DATA.buckets, orphan], allocation: { total: 115, over: true, text: 'Limits add up to 115% of the weekly plan: work 90%, fun 25%.', unknown: [] } }
   engine(on as never, [], over)
   await $.session.start({ cwd: '/work/app', surface: 'vscode', isInteractive: true })
   const ui = await $.ui.mount({ ...PANE, surface: 'vscode' })
   expect((await ui.find({ type: 'Text', text: /^⚠ Limits add up to 115%/ }))?.text).toContain('More than the whole plan.')
+  // A bucket that has usage but is no longer in budgets.yaml says how to keep it.
+  expect((await ui.find({ type: 'Text', text: /not in budgets\.yaml/ }))?.text).toContain('/budget rename oldwork <new name>')
   await ui.press({ key: 'new' })
   expect((await ui.find({ key: 'f-limit' }))?.props.placeholder).toContain('plan fully allocated')
   await ui.unmount()

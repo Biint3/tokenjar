@@ -189,6 +189,7 @@ function normalize(raw) {
   }
   if (!cfg.buckets[cfg.default_bucket]) {
     const nb = normalizeBucket(cfg.default_bucket, {}, [], globals);
+    nb.implicit = true; // named by default_bucket only, not listed under buckets
     cfg.buckets[cfg.default_bucket] = nb;
     cfg.bucketList.push(nb);
   }

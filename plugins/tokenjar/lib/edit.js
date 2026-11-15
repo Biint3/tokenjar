@@ -1,5 +1,5 @@
 'use strict';
-// Small, careful edits to budgets.yaml: adding a bucket, and opening the file
+// Small, careful edits to budgets.yaml: adding or renaming a bucket, and opening the file
 // in an editor. Edits keep the rest of the file (comments, order) as it is,
 // keep a backup, and are rolled back if the result no longer loads cleanly.
 
@@ -13,6 +13,7 @@ const fmt = require('./format');
 const periods = require('./periods');
 const plan = require('./plan');
 const budget = require('./budget');
+const ledger = require('./ledger');
 
 const NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,39}$/;
 
@@ -106,6 +107,111 @@ function insertBucket(text, b) {
   return { text: lines.join(eol) };
 }
 
+/** The regex for a key line `<indent>name:` (also quoted), escaped for the name. */
+function keyLine(name, indent) {
+  const n = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp('^(' + indent + ')(["\']?)' + n + '\\2(\\s*:)');
+}
+
+/**
+ * Rename a bucket's key inside the top-level `buckets:` block, and
+ * `default_bucket` if it names it. Returns { text, changed } or { error }.
+ */
+function renameInConfig(text, from, to) {
+  const eol = text.includes('\r\n') ? '\r\n' : '\n';
+  const lines = text.split(/\r?\n/);
+  let changed = false;
+  const at = lines.findIndex((l) => /^buckets\s*:\s*(#.*)?$/.test(l));
+  if (at === -1 && lines.some((l) => /^buckets\s*:\s*\{/.test(l))) return { error: 'buckets is written in the {...} short form; rename it by hand.' };
+  if (at !== -1) {
+    let indent = null;
+    for (let j = at + 1; j < lines.length; j++) {
+      const l = lines[j];
+      if (l.trim() === '' || l.trimStart().startsWith('#')) continue;
+      if (!/^\s/.test(l)) break;
+      if (indent === null) indent = l.match(/^(\s+)/)[1];
+      const re = keyLine(from, indent);
+      if (re.test(l)) {
+        lines[j] = l.replace(re, (_, i, q, colon) => i + q + to + q + colon);
+        changed = true;
+        break;
+      }
+    }
+  }
+  for (let j = 0; j < lines.length; j++) {
+    const m = lines[j].match(/^default_bucket(\s*:\s*)(["']?)([^"'#\s]+)\2(.*)$/);
+    if (m && m[3] === from) {
+      lines[j] = 'default_bucket' + m[1] + m[2] + to + m[2] + m[4];
+      changed = true;
+    }
+  }
+  return { text: lines.join(eol), changed };
+}
+
+/** Write new budgets.yaml text, rolling back to a backup if it loads worse than before. */
+function writeChecked(file, text, before, ok) {
+  const backup = `${file}.tokenjar-backup`;
+  fs.copyFileSync(file, backup);
+  fs.writeFileSync(file, text);
+  const after = config.load();
+  const newErrors = after.errors.filter((e) => !before.errors.includes(e));
+  if (!ok(after.config) || newErrors.length) {
+    fs.copyFileSync(backup, file);
+    return { error: newErrors.join('; ') || 'the change did not load', after };
+  }
+  return { after };
+}
+
+/**
+ * Rename a bucket and keep its history: renames it in budgets.yaml (unless
+ * that was already done by hand) and records the rename in the ledger, so past
+ * usage, /budget set choices and extensions count under the new name, on every
+ * machine that shares the ledger. `snap` is a current aggregate snapshot.
+ */
+function renameBucket({ from, to }, snap) {
+  from = String(from || '').trim();
+  to = String(to || '').trim();
+  if (!from || !to) return { ok: false, message: 'usage: /budget rename <old name> <new name>' };
+  if (!NAME.test(to)) return { ok: false, message: `"${to}" is not a valid bucket name (letters, digits, _ . -, up to 40).` };
+  if (from === to) return { ok: false, message: 'The old and new names are the same.' };
+  const file = ensureFile();
+  const before = config.load();
+  const cfg = before.config;
+  // Listed under buckets: (a default_bucket that isn't listed is only named, not listed).
+  const listed = (n) => Boolean(cfg.buckets[n] && !cfg.buckets[n].unconfigured && !cfg.buckets[n].implicit);
+  const hasUsage = (n) => Boolean(snap.byBucket[n] && Object.keys(snap.byBucket[n]).length);
+  const isDefault = cfg.default_bucket === from;
+  const fromIn = listed(from) || isDefault;
+  const toIn = listed(to);
+  if (!fromIn && !hasUsage(from)) {
+    const known = [...new Set([...cfg.bucketList.map((b) => b.name), ...Object.keys(snap.byBucket)])];
+    return { ok: false, message: `There is no bucket or usage named "${from}". Buckets: ${known.join(', ')}` };
+  }
+  if (listed(from) && toIn) {
+    return { ok: false, message: `Both "${from}" and "${to}" are in ${file}. Remove "${from}" from the file first; then /budget rename ${from} ${to} moves its usage into "${to}".` };
+  }
+  let edited = false;
+  if (fromIn) {
+    if (file.endsWith('.json')) return { ok: false, message: `Your budgets are in ${file}; rename "${from}" there by hand, then run this again.` };
+    const res = renameInConfig(fs.readFileSync(file, 'utf8'), from, to);
+    if (res.error) return { ok: false, message: `Not renamed: ${res.error}` };
+    if (!res.changed) return { ok: false, message: `Could not find "${from}:" in ${file}; rename it by hand, then run this again.` };
+    const w = writeChecked(file, res.text, before, (c) => Boolean(c.buckets[to]) && !c.bucketList.some((b) => b.name === from));
+    if (w.error) return { ok: false, message: `Not renamed, the file was left as it was: ${w.error}.` };
+    edited = true;
+  }
+  ledger.recordEvent(cfg, { t: 'r', from, to });
+  const merged = hasUsage(to) ? ` and merged with what "${to}" already had` : '';
+  const lines = [
+    edited && listed(from) ? `Renamed "${from}" to "${to}" in ${file}.` : `"${from}"'s usage now counts as "${to}".`,
+    `Its past usage, /budget set choices and extensions moved with it${merged}.`,
+  ];
+  if (edited && isDefault) lines.push(`default_bucket is now "${to}" too, so folders that match no rule go there.`);
+  if (!toIn && !edited) lines.push(`Note: "${to}" is not in ${file}, so it is tracked without a limit.`);
+  lines.push(`Undo with /budget rename ${to} ${from}.`);
+  return { ok: true, file, message: lines.join('\n') };
+}
+
 /** Add a bucket to budgets.yaml. Returns a message for the user. */
 function addBucket(spec) {
   const { errors, bucket } = validate(spec);
@@ -119,15 +225,9 @@ function addBucket(spec) {
   const text = fs.readFileSync(file, 'utf8');
   const res = insertBucket(text, bucket);
   if (res.error) return { ok: false, message: `Not added: ${res.error}` };
-  const backup = `${file}.tokenjar-backup`;
-  fs.copyFileSync(file, backup);
-  fs.writeFileSync(file, res.text);
-  const after = config.load();
-  const newErrors = after.errors.filter((e) => !before.errors.includes(e));
-  if (!after.config.buckets[bucket.name] || newErrors.length) {
-    fs.copyFileSync(backup, file);
-    return { ok: false, message: `Not added, the file was left as it was: ${newErrors.join('; ') || 'the new bucket did not load'}.` };
-  }
+  const w = writeChecked(file, res.text, before, (c) => Boolean(c.buckets[bucket.name]));
+  if (w.error) return { ok: false, message: `Not added, the file was left as it was: ${w.error === 'the change did not load' ? 'the new bucket did not load' : w.error}.` };
+  const after = w.after;
   const message = bucket.paths.length
     ? `Added bucket "${bucket.name}" for ${bucket.paths.join(', ')}. Run /budget rebucket --apply to move past sessions there.`
     : `Added bucket "${bucket.name}". It has no folders: use "use here" or /budget set ${bucket.name} to put a session in it.`;
@@ -159,4 +259,4 @@ function openConfig({ env = process.env } = {}) {
   }
 }
 
-module.exports = { addBucket, openConfig, validate, insertBucket, displayPath };
+module.exports = { addBucket, renameBucket, renameInConfig, openConfig, validate, insertBucket, displayPath };

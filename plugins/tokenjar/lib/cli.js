@@ -299,6 +299,7 @@ const HELP = [
   '  /budget rebucket [--apply]      re-file past sessions after changing folder rules',
   '  /budget add <name> [--path <folder>] [--limit 20M|"25% of plan"] [--period weekly] [--reset mon] [--mode warn]',
   '                                  add a bucket to budgets.yaml',
+  '  /budget rename <old> <new>      rename a bucket and keep its usage (also after renaming it by hand)',
   '  /budget edit                    open budgets.yaml in your editor',
   '  /budget init                    create budgets.yaml from the example',
   '  /budget statusline install      add the tokenjar status line (keeps yours)',
@@ -328,6 +329,11 @@ function runBudget(loaded, rest, opts) {
         reset_day: opts.reset === true ? undefined : opts.reset,
         mode: opts.mode === true ? undefined : opts.mode,
       }).message;
+    case 'rename':
+    case 'mv': {
+      syncForReport(loaded.config);
+      return edit.renameBucket({ from: rest[1], to: rest[2] }, aggregate.snapshot(loaded.config)).message;
+    }
     case 'edit':
     case 'open':
       return edit.openConfig().message;
