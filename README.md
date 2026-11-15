@@ -25,11 +25,12 @@ Track where your tokens go, see progress in the status line, get warned or stopp
 ## Install
 
 ```text
-/plugin marketplace add OWNER/tokenjar
+/plugin marketplace add Biint3/tokenjar
 /plugin install tokenjar@tokenjar
+/plugin install tokenjar-pane@tokenjar   # optional: the live pane
 ```
 
-Replace `OWNER` with the GitHub account that hosts this repository. Then, in Claude Code:
+Then, in Claude Code:
 
 ```text
 /budget init                  # creates budgets.yaml from the example

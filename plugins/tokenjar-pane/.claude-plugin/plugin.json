@@ -2,7 +2,11 @@
   "name": "tokenjar-pane",
   "version": "0.2.0",
   "description": "Live tokenjar budgets in a pane beside the chat, with buttons to switch bucket, extend and refresh. Needs the tokenjar plugin. 100% local.",
-  "author": { "name": "tokenjar contributors" },
+  "author": {
+    "name": "Biint3"
+  },
+  "homepage": "https://github.com/Biint3/tokenjar",
+  "repository": "https://github.com/Biint3/tokenjar",
   "license": "MIT",
   "icon": "./.claude-plugin/icon.png",
   "types": "./types/index.d.ts"

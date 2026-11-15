@@ -4,9 +4,18 @@
   "version": "0.3.0",
   "description": "Token budgets per bucket (work, fun, creative...): tracks usage from local transcripts, shows progress, warns or blocks when a bucket is spent. 100% local.",
   "author": {
-    "name": "tokenjar contributors"
+    "name": "Biint3"
   },
+  "homepage": "https://github.com/Biint3/tokenjar",
+  "repository": "https://github.com/Biint3/tokenjar",
   "license": "MIT",
   "icon": "./.claude-plugin/icon.png",
-  "keywords": ["budget", "tokens", "usage", "statusline", "quota", "privacy"]
+  "keywords": [
+    "budget",
+    "tokens",
+    "usage",
+    "statusline",
+    "quota",
+    "privacy"
+  ]
 }

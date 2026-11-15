@@ -2,7 +2,7 @@
   "name": "tokenjar",
   "description": "tokenjar: self-imposed token budgets per bucket for Claude Code. Runs 100% locally.",
   "owner": {
-    "name": "tokenjar contributors"
+    "name": "Biint3"
   },
   "plugins": [
     {
