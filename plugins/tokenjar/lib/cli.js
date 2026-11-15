@@ -13,6 +13,7 @@ const budget = require('./budget');
 const aggregate = require('./aggregate');
 const format = require('./format');
 const plan = require('./plan');
+const edit = require('./edit');
 
 /** Bytes of transcript a single hook call may read (keeps hooks fast). */
 const HOOK_READ_BUDGET = 16 * 1024 * 1024;
@@ -36,7 +37,7 @@ function parseArgs(argv) {
     if (a.startsWith('--')) {
       const eq = a.indexOf('=');
       if (eq !== -1) opts[a.slice(2, eq)] = a.slice(eq + 1);
-      else if (i + 1 < argv.length && !argv[i + 1].startsWith('--') && ['session', 'cwd'].includes(a.slice(2))) opts[a.slice(2)] = argv[++i];
+      else if (i + 1 < argv.length && !argv[i + 1].startsWith('--') && ['session', 'cwd', 'path', 'limit', 'period', 'reset', 'mode'].includes(a.slice(2))) opts[a.slice(2)] = argv[++i];
       else opts[a.slice(2)] = true;
     } else rest.push(a);
   }
@@ -296,6 +297,9 @@ const HELP = [
   '  /budget extend <bucket> <amt>   one-off increase for the current period, e.g. 5M',
   '  /budget usage                   today / week / month / all-time per bucket',
   '  /budget rebucket [--apply]      re-file past sessions after changing folder rules',
+  '  /budget add <name> [--path <folder>] [--limit 20M|"25% of plan"] [--period weekly] [--reset mon] [--mode warn]',
+  '                                  add a bucket to budgets.yaml',
+  '  /budget edit                    open budgets.yaml in your editor',
   '  /budget init                    create budgets.yaml from the example',
   '  /budget statusline install      add the tokenjar status line (keeps yours)',
   '  /budget statusline uninstall    remove it again',
@@ -315,6 +319,18 @@ function runBudget(loaded, rest, opts) {
       return cmdExtend(loaded, rest);
     case 'rebucket':
       return cmdRebucket(loaded, opts);
+    case 'add':
+      return edit.addBucket({
+        name: rest[1],
+        paths: opts.path === true ? [] : opts.path,
+        limit: opts.limit === true ? '' : opts.limit,
+        period: opts.period === true ? undefined : opts.period,
+        reset_day: opts.reset === true ? undefined : opts.reset,
+        mode: opts.mode === true ? undefined : opts.mode,
+      }).message;
+    case 'edit':
+    case 'open':
+      return edit.openConfig().message;
     case 'init':
       return cmdInit();
     case 'statusline':

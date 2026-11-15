@@ -39,7 +39,12 @@ function engine(on: (event: string, hook: (...a: any[]) => unknown) => void, run
   on('process.run', (_: unknown, e: { argv: string[] }) => {
     runs.push([...e.argv])
     const isPanel = e.argv[2] === 'panel'
-    const stdout = isPanel ? JSON.stringify(DATA) : `answer to ${e.argv.slice(3, 6).join(' ')}\nsecond line`
+    const isAdd = e.argv[3] === 'add'
+    const stdout = isPanel
+      ? JSON.stringify(DATA)
+      : isAdd && e.argv[4] === 'writing'
+        ? 'Added bucket "writing" for /work/app.'
+        : `answer to ${e.argv.slice(3, 6).join(' ')}\nsecond line`
     return { value: { exitCode: 0, stdout, stderr: '' } }
   })
 }
@@ -68,7 +73,7 @@ test('the pane draws buckets from tokenjar and passes the plan reading on', asyn
   expect(withPlan?.find(a => a.startsWith('--plan='))).toContain('"seven_day":{"used_percentage":34,"resets_at":1795165200}')
 })
 
-test('the buttons move the session, extend a bucket near its limit, and refresh', async ($, on) => {
+test('the buttons move the session, extend a bucket near its limit, and refresh', { timeoutMs: 30_000 }, async ($, on) => {
   const runs: string[][] = []
   engine(on as never, runs)
   await $.session.start({ cwd: '/work/app', surface: 'terminal', isInteractive: true })
@@ -98,6 +103,53 @@ test('the buttons move the session, extend a bucket near its limit, and refresh'
   const before = runs.length
   await ui.press({ key: 'refresh' })
   expect(runs.slice(before).some(a => a[2] === 'panel')).toBe(true)
+  await ui.unmount()
+})
+
+test('new bucket form: fill in, create, and the form closes on success', { timeoutMs: 30_000 }, async ($, on) => {
+  const runs: string[][] = []
+  engine(on as never, runs)
+  await $.session.start({ cwd: '/work/app', surface: 'vscode', isInteractive: true })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'vscode' })
+  expect(await ui.find({ key: 'f-name' })).toBeUndefined()
+  await ui.press({ key: 'new' })
+  expect(await ui.find({ key: 'f-name' })).toBeDefined()
+
+  await ui.input({ key: 'f-name', text: 'writing', kind: 'change' })
+  await ui.press({ key: 'f-here' })
+  await ui.input({ key: 'f-limit', text: '15% of plan', kind: 'change' })
+  await ui.select({ key: 'f-period', value: 'monthly' })
+  await ui.input({ key: 'f-reset', text: '15', kind: 'change' })
+  await ui.select({ key: 'f-mode', value: 'block' })
+  await ui.press({ key: 'f-create' })
+
+  const add = runs.find(a => a[2] === 'budget' && a[3] === 'add')
+  expect(add?.slice(3, 10)).toEqual([
+    'add',
+    'writing',
+    '--path=/work/app',
+    '--limit=15% of plan',
+    '--period=monthly',
+    '--reset=15',
+    '--mode=block',
+  ])
+  // Success closes and empties the form, and shows tokenjar's answer.
+  const notices = (await ui.findAll({ type: 'Text' })).map(t => t.text).filter(t => /bucket|answer/.test(t))
+  expect(notices).toContain('Added bucket "writing" for /work/app.')
+  expect(await ui.find({ key: 'f-name' })).toBeUndefined()
+  expect((await ui.find({ type: 'Text', text: /^Added bucket/ }))?.text).toBe('Added bucket "writing" for /work/app.')
+
+  // A refused bucket keeps the form open with what was typed; Cancel closes it.
+  await ui.press({ key: 'new' })
+  await ui.input({ key: 'f-name', text: 'bad name', kind: 'change' })
+  await ui.press({ key: 'f-create' })
+  expect(await ui.find({ key: 'f-name' })).toBeDefined()
+  await ui.press({ key: 'f-cancel' })
+  expect(await ui.find({ key: 'f-name' })).toBeUndefined()
+
+  await ui.press({ key: 'edit' })
+  expect(runs.some(a => a.slice(2, 4).join(' ') === 'budget edit')).toBe(true)
   await ui.unmount()
 })
 

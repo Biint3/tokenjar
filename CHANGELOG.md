@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.0 (tokenjar) / 0.2.0 (tokenjar-pane)
+
+- New optional `tokenjar-pane` plugin: a live pane beside the chat with every bucket, plan weekly / 5-hour
+  bars, and buttons: use here, back to folder rules, extend, refresh, new bucket, edit budgets
+- The pane passes the plan % to tokenjar on every surface, so `% of plan` limits calibrate in the VS Code
+  panel too (no status line needed)
+- `/budget add` adds a bucket to `budgets.yaml` without touching the rest of the file; `/budget edit` opens it
+- Fix: `/budget extend` now works on `% of plan` buckets once they are calibrated
+- tokenjar keeps a stable `cli.js` launcher in its config folder for the pane
+
 ## 0.2.0
 
 - Relate budgets to the Claude plan: the status line records the plan's weekly % (Pro/Max/Ultra), tokenjar

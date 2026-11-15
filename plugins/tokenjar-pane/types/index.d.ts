@@ -44,8 +44,19 @@ export type PanelView = {
   notice: string | null
 }
 
+/** The "new bucket" form while it is being filled in. */
+export type BucketDraft = {
+  open: boolean
+  name: string
+  paths: string
+  limit: string
+  period: string
+  reset: string
+  mode: string
+}
+
 declare module 'claude-code' {
   interface PluginState {
-    'tokenjar-pane': { view: Shaped<PanelView> }
+    'tokenjar-pane': { view: Shaped<PanelView>; draft: Shaped<BucketDraft> }
   }
 }

@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, SessionRateLimit } from 'claude-code'
 
-import type { PanelBucket, PanelData, PanelView } from '../types'
+import type { BucketDraft, PanelBucket, PanelData, PanelView } from '../types'
 
 // The pane reads from and acts through the tokenjar CLI. Everything stays on
 // this machine: it runs `node <tokenjar config>/cli.js ...` and draws what that
@@ -18,6 +18,9 @@ const view = atom(
   { data: null, problem: null, updatedAt: null, notice: null },
   { shape: 'view-2' },
 )
+
+const EMPTY_DRAFT: BucketDraft = { open: false, name: '', paths: '', limit: '', period: 'weekly', reset: '', mode: 'warn' }
+const draft = atom({ plugin: 'tokenjar-pane', key: 'draft' } as const, EMPTY_DRAFT, { shape: 'draft-1' })
 
 /** Plan windows from Claude Code, in the status line's `rate_limits` shape tokenjar reads. */
 function planArg(limits: readonly SessionRateLimit[]): string | null {
@@ -98,7 +101,7 @@ async function refresh($: EngineInterface, plan: string | null = null) {
 }
 
 /** Runs one `/budget` subcommand for this session, shows its answer, then refreshes. */
-async function act($: EngineInterface, args: string[]) {
+async function act($: EngineInterface, args: string[]): Promise<string> {
   await update($, view, v => ({ ...v, notice: 'Working…' }))
   let notice: string
   try {
@@ -110,6 +113,7 @@ async function act($: EngineInterface, args: string[]) {
   }
   await update($, view, v => ({ ...v, notice }))
   await refresh($)
+  return notice
 }
 
 async function useBucket($: EngineInterface, name: string) {
@@ -122,6 +126,37 @@ async function backToFolderRules($: EngineInterface) {
 
 async function extendBucket($: EngineInterface, name: string, amount: string) {
   await act($, ['extend', name, amount])
+}
+
+async function editBudgets($: EngineInterface) {
+  await act($, ['edit'])
+}
+
+async function toggleForm($: EngineInterface) {
+  await update($, draft, d => ({ ...d, open: !d.open }))
+}
+
+async function setDraft($: EngineInterface, field: keyof Omit<BucketDraft, 'open'>, value: string) {
+  await update($, draft, d => ({ ...d, [field]: value }))
+}
+
+async function useThisFolder($: EngineInterface) {
+  const cwd = await $.session.cwd()
+  await update($, draft, d => ({ ...d, paths: cwd }))
+}
+
+async function createBucket($: EngineInterface) {
+  const d = await read($, draft)
+  const notice = await act($, [
+    'add',
+    d.name.trim(),
+    `--path=${d.paths}`,
+    `--limit=${d.limit}`,
+    `--period=${d.period}`,
+    `--reset=${d.reset}`,
+    `--mode=${d.mode}`,
+  ])
+  if (notice.startsWith('Added bucket')) await update($, draft, () => EMPTY_DRAFT)
 }
 
 async function refreshNow($: EngineInterface) {
@@ -153,14 +188,15 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Text, Button } = $.ui.resolve(e)
+    const { Box, Text, Button, Input, Select } = $.ui.resolve(e)
     const { data, problem, updatedAt, notice } = await read($, view)
+    const form = await read($, draft)
 
     if (!data) {
       return (
         <Box flexDirection="column">
           <Text dimColor>{problem ? `tokenjar: ${problem}` : 'Reading tokenjar…'}</Text>
-          {problem && <Button key="refresh" label="↻ Try again" onPress={() => void refreshNow($)} />}
+          {problem && <Button key="refresh" label="↻ Try again" onPress={() => refreshNow($)} />}
         </Box>
       )
     }
@@ -183,7 +219,7 @@ export const register: Register = on => {
               This session → <Text weight="bold">{data.session.bucket}</Text>
             </Text>
             {data.session.isSet && (
-              <Button key="auto" label="back to folder rules" dimColor onPress={() => void backToFolderRules($)} />
+              <Button key="auto" label="back to folder rules" dimColor onPress={() => backToFolderRules($)} />
             )}
           </Box>
         )}
@@ -209,14 +245,14 @@ export const register: Register = on => {
                 <Text dimColor>{`  resets ${b.resets}`}</Text>
               </Text>
               {!b.isSession && (
-                <Button key={`use-${b.name}`} label="use here" dimColor onPress={() => void useBucket($, b.name)} />
+                <Button key={`use-${b.name}`} label="use here" dimColor onPress={() => useBucket($, b.name)} />
               )}
               {b.extendBy && (b.level === 'warn' || b.level === 'over') && (
                 <Button
                   key={`ext-${b.name}`}
                   label={`+${b.extendBy}`}
                   variant="primary"
-                  onPress={() => void extendBucket($, b.name, b.extendBy ?? '')}
+                  onPress={() => extendBucket($, b.name, b.extendBy ?? '')}
                 />
               )}
             </Box>
@@ -251,10 +287,40 @@ export const register: Register = on => {
         {data.errors.length > 0 && <Text color="warning">{`budgets.yaml: ${data.errors[0]}`}</Text>}
         {problem && <Text color="warning">{`last refresh failed: ${problem}`}</Text>}
         {notice && <Text color="suggestion">{notice}</Text>}
-        <Box flexDirection="row" gap={1}>
-          <Button key="refresh" label="↻ refresh" dimColor onPress={() => void refreshNow($)} />
-          <Text dimColor>{`updated ${time} · * default bucket · /budget-pane reopens`}</Text>
+        {form.open && (
+          <Box key="form" flexDirection="column" borderStyle="round" paddingX={1} marginTop={1}>
+            <Text weight="bold">New bucket</Text>
+            <Input key="f-name" label="name   " placeholder="e.g. writing" value={form.name} autoFocus
+              onInput={v => setDraft($, 'name', v)} onSubmit={() => createBucket($)} submitLabel="create" />
+            <Box flexDirection="row" gap={1}>
+              <Input key="f-paths" label="folders" placeholder="optional, e.g. ~/writing, ~/notes" value={form.paths}
+                onInput={v => setDraft($, 'paths', v)} onSubmit={() => createBucket($)} submitLabel="create" />
+              <Button key="f-here" label="this folder" dimColor onPress={() => useThisFolder($)} />
+            </Box>
+            <Input key="f-limit" label="limit  " placeholder="20M, 25% of plan, or empty to just track" value={form.limit}
+              onInput={v => setDraft($, 'limit', v)} onSubmit={() => createBucket($)} submitLabel="create" />
+            <Select key="f-period" label="period " value={form.period}
+              options={[{ value: 'weekly' }, { value: 'monthly' }, { value: 'daily' }]}
+              onSelect={v => setDraft($, 'period', v)} />
+            {form.period !== 'daily' && (
+              <Input key="f-reset" label="resets " placeholder={form.period === 'monthly' ? 'day 1-31 (default 1)' : 'weekday (default mon)'}
+                value={form.reset} onInput={v => setDraft($, 'reset', v)} onSubmit={() => createBucket($)} submitLabel="create" />
+            )}
+            <Select key="f-mode" label="mode   " value={form.mode}
+              options={[{ value: 'warn', label: 'warn (never blocks)' }, { value: 'block', label: 'block at 100%' }]}
+              onSelect={v => setDraft($, 'mode', v)} />
+            <Box flexDirection="row" gap={1}>
+              <Button key="f-create" label="Create bucket" variant="primary" onPress={() => createBucket($)} />
+              <Button key="f-cancel" label="Cancel" dimColor onPress={() => toggleForm($)} />
+            </Box>
+          </Box>
+        )}
+        <Box flexDirection="row" gap={1} flexWrap="wrap">
+          <Button key="refresh" label="↻ refresh" dimColor onPress={() => refreshNow($)} />
+          {!form.open && <Button key="new" label="＋ new bucket" dimColor onPress={() => toggleForm($)} />}
+          <Button key="edit" label="✎ edit budgets" dimColor onPress={() => editBudgets($)} />
         </Box>
+        <Text dimColor>{`updated ${time} · * default bucket · /budget-pane reopens`}</Text>
       </Box>
     )
   })

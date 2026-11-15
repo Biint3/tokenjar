@@ -201,6 +201,8 @@ line is read as an unknown top-level setting; `/budget status` reports it as `un
 | `/budget extend <bucket> <amount>` | one-off increase for the current period, e.g. `/budget extend work 5M` |
 | `/budget usage` | today / this week / this month / all time per bucket |
 | `/budget rebucket [--apply]` | after changing folder rules, re-file past sessions (explicit `set`s are kept) |
+| `/budget add <name> [--path <folder>] [--limit 20M] [--period weekly] [--reset mon] [--mode warn]` | add a bucket to `budgets.yaml`, leaving the rest of the file (and its comments) as it is. `--limit` also takes `"25% of plan"` |
+| `/budget edit` | open `budgets.yaml` in your editor |
 | `/budget init` | create `budgets.yaml` from the example |
 | `/budget statusline install` / `uninstall` | add or remove the status line |
 
@@ -237,6 +239,8 @@ It opens by itself when the window is wide enough; `/budget-pane` opens it on de
 | `back to folder rules` | undo that (`/budget set auto`) |
 | `+5M` | on a bucket at its warn level or over: a one-off extension of about 25% of its limit |
 | `↻ refresh` | update now |
+| `＋ new bucket` | a small form (name, folders, limit, period, reset day, mode) that adds a bucket to `budgets.yaml` |
+| `✎ edit budgets` | open `budgets.yaml` (in VS Code when you're in VS Code, else your default app) |
 
 * **Plan % without the status line.** The pane receives the plan's weekly and 5-hour % from Claude Code
   on every surface, including the VS Code panel where the status line isn't drawn, and passes it to tokenjar
