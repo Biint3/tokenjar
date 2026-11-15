@@ -26,7 +26,7 @@ const DATA = {
   generated: '2026-11-15T00:00:00Z',
 }
 
-function engine(on: (event: string, hook: (...a: any[]) => unknown) => void, runs: string[][]) {
+function engine(on: (event: string, hook: (...a: any[]) => unknown) => void, runs: string[][], data: unknown = DATA) {
   on('command.register', () => ({ value: { command: 'budget-pane' } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.start', (_: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
@@ -41,7 +41,7 @@ function engine(on: (event: string, hook: (...a: any[]) => unknown) => void, run
     const isPanel = e.argv[2] === 'panel'
     const isAdd = e.argv[3] === 'add'
     const stdout = isPanel
-      ? JSON.stringify(DATA)
+      ? JSON.stringify(data)
       : isAdd && e.argv[4] === 'writing'
         ? 'Added bucket "writing" for /work/app.'
         : `answer to ${e.argv.slice(3, 6).join(' ')}\nsecond line`
@@ -150,6 +150,17 @@ test('new bucket form: fill in, create, and the form closes on success', { timeo
 
   await ui.press({ key: 'edit' })
   expect(runs.some(a => a.slice(2, 4).join(' ') === 'budget edit')).toBe(true)
+  await ui.unmount()
+})
+
+test('limits over the whole plan are flagged, and the form suggests what is left', { timeoutMs: 30_000 }, async ($, on) => {
+  const over = { ...DATA, allocation: { total: 115, over: true, text: 'Limits add up to 115% of the weekly plan: work 90%, fun 25%.', unknown: [] } }
+  engine(on as never, [], over)
+  await $.session.start({ cwd: '/work/app', surface: 'vscode', isInteractive: true })
+  const ui = await $.ui.mount({ ...PANE, surface: 'vscode' })
+  expect((await ui.find({ type: 'Text', text: /^⚠ Limits add up to 115%/ }))?.text).toContain('More than the whole plan.')
+  await ui.press({ key: 'new' })
+  expect((await ui.find({ key: 'f-limit' }))?.props.placeholder).toContain('plan fully allocated')
   await ui.unmount()
 })
 

@@ -12,6 +12,7 @@ const paths = require('./paths');
 const fmt = require('./format');
 const periods = require('./periods');
 const plan = require('./plan');
+const budget = require('./budget');
 
 const NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,39}$/;
 
@@ -130,7 +131,12 @@ function addBucket(spec) {
   const message = bucket.paths.length
     ? `Added bucket "${bucket.name}" for ${bucket.paths.join(', ')}. Run /budget rebucket --apply to move past sessions there.`
     : `Added bucket "${bucket.name}". It has no folders: use "use here" or /budget set ${bucket.name} to put a session in it.`;
-  return { ok: true, file, message };
+  const alloc = budget.allocation(after.config);
+  const total = Math.round(alloc.total);
+  const note = alloc.over
+    ? ` Note: your limits now add up to ${alloc.items.some((x) => x.estimated) ? 'about ' : ''}${total}% of the weekly plan, more than the whole plan.`
+    : '';
+  return { ok: true, file, message: message + note, allocation: alloc };
 }
 
 /** Open budgets.yaml: in VS Code when running inside it, else the system's default app. */

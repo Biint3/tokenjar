@@ -28,8 +28,16 @@ export type PanelPlan = {
   claudeCodePct: number | null
 }
 
+export type PanelAllocation = {
+  total: number
+  over: boolean
+  text: string | null
+  unknown: string[]
+}
+
 export type PanelData = {
   metric: string
+  allocation?: PanelAllocation
   session: { bucket: string; reason: string | null; isSet: boolean } | null
   buckets: PanelBucket[]
   plan: PanelPlan

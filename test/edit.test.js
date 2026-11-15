@@ -92,3 +92,35 @@ test('addBucket rolls back when the result would not load', () => {
     sb.cleanup();
   }
 });
+
+test('allocation: plan shares add up as written, fixed limits convert once calibrated, over 100% is flagged', () => {
+  const budget = lib('budget');
+  const cfg = config.normalize({
+    buckets: {
+      a: { limit: '60% of plan' },
+      b: { limit: '30% of plan', period: 'monthly' },
+      c: { limit: '7M', period: 'weekly' },
+    },
+  }).config;
+  const uncal = budget.allocation(cfg, new Date(), { calibration: { perPct: null } });
+  assert.equal(uncal.total, 90);
+  assert.deepEqual(uncal.unknown, ['c']);
+  assert.equal(uncal.over, false);
+  const cal = budget.allocation(cfg, new Date(), { calibration: { perPct: 1e6 } });
+  assert.equal(Math.round(cal.total), 97);
+  assert.equal(cal.items.find((x) => x.name === 'c').estimated, true);
+  const over = budget.allocation(cfg, new Date(), { calibration: { perPct: 5e5 } });
+  assert.equal(over.over, true);
+});
+
+test('addBucket notes when limits add up to more than the plan', () => {
+  const sb = sandbox();
+  try {
+    fs.mkdirSync(paths.configDir(), { recursive: true });
+    fs.writeFileSync(path.join(paths.configDir(), 'budgets.yaml'), 'buckets:\n  a:\n    limit: 80% of plan\n');
+    assert.doesNotMatch(edit.addBucket({ name: 'b', limit: '20% of plan' }).message, /more than/);
+    assert.match(edit.addBucket({ name: 'c', limit: '10% of plan' }).message, /add up to 110% of the weekly plan, more than the whole plan/);
+  } finally {
+    sb.cleanup();
+  }
+});

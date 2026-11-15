@@ -67,6 +67,8 @@ function statusText(cfg, opts = {}) {
   }
   lines.push('');
   lines.push(...planLines(cfg, snap, now));
+  const alloc = allocationLines(cfg, now);
+  if (alloc.length) lines.push(...alloc);
   lines.push('');
   lines.push(...ledgerLines(cfg, now));
   return lines.join('\n');
@@ -132,6 +134,27 @@ function planLines(cfg, snap, now) {
   } else {
     out.push(`Calibrating: seen ${cal.points} of ${plan.MIN_POINTS} percentage points of plan movement needed for an estimate.`);
   }
+  return out;
+}
+
+function pctText(p) {
+  return `${p < 10 ? Math.round(p * 10) / 10 : Math.round(p)}%`;
+}
+
+/** One-line summary of how much of the weekly plan the limits add up to. */
+function allocationText(a) {
+  if (!a.items.length) return null;
+  const parts = a.items.map((x) => `${x.name} ${x.estimated ? '≈' : ''}${pctText(x.pct)}`).join(', ');
+  const extra = a.unknown.length ? ` + ${a.unknown.join(', ')} (fixed limits, counted once calibrated)` : '';
+  return `Limits add up to ${a.items.some((x) => x.estimated) ? '≈' : ''}${pctText(a.total)} of the weekly plan: ${parts}${extra}.`;
+}
+
+function allocationLines(cfg, now) {
+  const a = budget.allocation(cfg, now);
+  const text = allocationText(a);
+  if (!text) return [];
+  const out = [text];
+  if (a.over) out.push('  That is more than the whole plan: if every bucket is used to its limit, the plan runs out first.');
   return out;
 }
 
@@ -316,7 +339,9 @@ function panelJson(cfg, { sessionId = null, cwd = null, now = new Date(), errors
     };
   });
   const { current: cur, calibration: cal, shares, claudeCodeTotal } = planInfo(cfg, snap, now);
+  const alloc = budget.allocation(cfg, now);
   return {
+    allocation: { total: Math.round(alloc.total * 10) / 10, over: alloc.over, text: allocationText(alloc), unknown: alloc.unknown },
     metric: acc.metricLabel(cfg.metric),
     session: session ? { bucket: session.bucket, reason: session.reason || null, isSet: Boolean(sessionId && snap.overrides[sessionId]) } : null,
     buckets,

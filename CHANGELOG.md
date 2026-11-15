@@ -7,6 +7,8 @@
 - The pane passes the plan % to tokenjar on every surface, so `% of plan` limits calibrate in the VS Code
   panel too (no status line needed)
 - `/budget add` adds a bucket to `budgets.yaml` without touching the rest of the file; `/budget edit` opens it
+- `/budget status`, the pane and `/budget add` show how much of the weekly plan your limits add up to,
+  and warn when it is more than 100%
 - Fix: `/budget extend` now works on `% of plan` buckets once they are calibrated
 - tokenjar keeps a stable `cli.js` launcher in its config folder for the pane
 

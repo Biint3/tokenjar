@@ -33,6 +33,14 @@ function planArg(limits: readonly SessionRateLimit[]): string | null {
   return Object.keys(out).length ? JSON.stringify({ rate_limits: out }) : null
 }
 
+/** The limit field's hint: what is still unallocated of the plan, when known. */
+function limitHint(data: PanelData | null): string {
+  const total = data?.allocation?.total
+  if (total === undefined || total === null || !data?.allocation?.text) return '20M, 25% of plan, or empty to just track'
+  const free = Math.max(0, Math.round(100 - total))
+  return free > 0 ? `e.g. ${free}% of plan (unallocated), 20M, or empty` : 'plan fully allocated: 20M, N% of plan, or empty'
+}
+
 function bar(fraction: number): string {
   const full = Math.max(0, Math.min(BAR, Math.round(fraction * BAR)))
   return '▓'.repeat(full) + '░'.repeat(BAR - full)
@@ -259,6 +267,12 @@ export const register: Register = on => {
             <Text dimColor>{`    ${detail(b)}`}</Text>
           </Box>
         ))}
+        {data.allocation?.text && (
+          <Text color={data.allocation.over ? 'warning' : undefined} dimColor={!data.allocation.over}>
+            {data.allocation.over ? `⚠ ${data.allocation.text} More than the whole plan.` : data.allocation.text}
+          </Text>
+        )}
+        {data.allocation?.text && <Text> </Text>}
         {p.weeklyPct !== null || p.fiveHourPct !== null ? (
           <Box flexDirection="column">
             <Text weight="bold">Claude plan</Text>
@@ -297,7 +311,7 @@ export const register: Register = on => {
                 onInput={v => setDraft($, 'paths', v)} onSubmit={() => createBucket($)} submitLabel="create" />
               <Button key="f-here" label="this folder" dimColor onPress={() => useThisFolder($)} />
             </Box>
-            <Input key="f-limit" label="limit  " placeholder="20M, 25% of plan, or empty to just track" value={form.limit}
+            <Input key="f-limit" label="limit  " placeholder={limitHint(data)} value={form.limit}
               onInput={v => setDraft($, 'limit', v)} onSubmit={() => createBucket($)} submitLabel="create" />
             <Select key="f-period" label="period " value={form.period}
               options={[{ value: 'weekly' }, { value: 'monthly' }, { value: 'daily' }]}

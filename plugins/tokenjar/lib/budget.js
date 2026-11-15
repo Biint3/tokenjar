@@ -81,4 +81,31 @@ function allBucketNames(cfg, snap) {
   return names;
 }
 
-module.exports = { bucketStatus, sessionBucket, allBucketNames, calibration };
+/**
+ * How much of the weekly plan the limits add up to. A "% of plan" limit counts
+ * as written (it's already a weekly share, whatever the bucket's period); a
+ * fixed limit is converted with the plan calibration, per week, once there is
+ * one. Returns { items: [{name, pct, estimated}], total, unknown: [names], over }.
+ */
+function allocation(cfg, now = new Date(), opts = {}) {
+  const cal = opts.calibration || calibration(cfg);
+  const items = [];
+  const unknown = [];
+  for (const b of cfg.bucketList) {
+    if (b.limit_plan_pct) {
+      items.push({ name: b.name, pct: b.limit_plan_pct, estimated: false });
+    } else if (b.limit) {
+      if (!cal.perPct) {
+        unknown.push(b.name);
+        continue;
+      }
+      const { start, end } = periods.range(b.period, b.reset_day, now);
+      items.push({ name: b.name, pct: b.limit / (cal.perPct * plan.periodScale(start, end)), estimated: true });
+    }
+  }
+  items.sort((a, b) => b.pct - a.pct);
+  const total = items.reduce((s, x) => s + x.pct, 0);
+  return { items, total, unknown, over: total > 100.05 };
+}
+
+module.exports = { bucketStatus, sessionBucket, allBucketNames, calibration, allocation };
