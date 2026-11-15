@@ -118,3 +118,20 @@ test('end to end: the installed shim renders a line from stdin', () => {
     sb.cleanup();
   }
 });
+
+test('cli.js launcher forwards any command to the installed plugin', () => {
+  const sb = sandbox();
+  try {
+    const sl = lib('statusline');
+    assert.equal(sl.refreshCliShim(), true);
+    assert.equal(sl.refreshCliShim(), false); // unchanged: no rewrite
+    const r = spawnSync(process.execPath, [sl.cliShimFile(), 'panel', '--cwd', sb.dir], { encoding: 'utf8', env: process.env });
+    const out = JSON.parse(r.stdout);
+    assert.ok(Array.isArray(out.buckets));
+    fs.writeFileSync(sl.cliShimFile(), sl.cliShimSource(path.join(sb.dir, 'gone')));
+    const gone = JSON.parse(spawnSync(process.execPath, [sl.cliShimFile(), 'panel'], { encoding: 'utf8', env: process.env }).stdout);
+    assert.match(gone.error, /not found/);
+  } finally {
+    sb.cleanup();
+  }
+});

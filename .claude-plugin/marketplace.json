@@ -10,7 +10,23 @@
       "source": "./plugins/tokenjar",
       "description": "Token budgets per bucket (work, fun, creative...) with status line, warnings and optional blocking. 100% local, no network, no telemetry.",
       "category": "productivity",
-      "tags": ["budget", "tokens", "usage", "statusline"]
+      "tags": [
+        "budget",
+        "tokens",
+        "usage",
+        "statusline"
+      ]
+    },
+    {
+      "name": "tokenjar-pane",
+      "source": "./plugins/tokenjar-pane",
+      "description": "Optional live pane for tokenjar: budgets and plan % beside the chat, with buttons to switch bucket, extend and refresh. Needs tokenjar. 100% local.",
+      "category": "productivity",
+      "tags": [
+        "budget",
+        "tokens",
+        "pane"
+      ]
     }
   ]
 }

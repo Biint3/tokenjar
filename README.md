@@ -220,6 +220,32 @@ Plugins can't register a status line by themselves, so `/budget statusline insta
   plugin version, so plugin updates don't break it.
 * Set `NO_COLOR=1` to turn colours off.
 
+## Live pane (optional)
+
+`tokenjar-pane` is a second, optional plugin in this marketplace: a pane beside the chat that shows every
+bucket, your Claude plan's weekly and 5-hour %, and updates itself after each turn and once a minute.
+
+```
+/plugin install tokenjar-pane@tokenjar
+```
+
+It opens by itself when the window is wide enough; `/budget-pane` opens it on demand. Its buttons:
+
+| button | what it does |
+| --- | --- |
+| `use here` | move this session to that bucket (same as `/budget set`) |
+| `back to folder rules` | undo that (`/budget set auto`) |
+| `+5M` | on a bucket at its warn level or over: a one-off extension of about 25% of its limit |
+| `↻ refresh` | update now |
+
+* **Plan % without the status line.** The pane receives the plan's weekly and 5-hour % from Claude Code
+  on every surface, including the VS Code panel where the status line isn't drawn, and passes it to tokenjar
+  so `% of plan` limits calibrate.
+* It runs only the local tokenjar CLI (through `cli.js` in the tokenjar config folder, which tokenjar keeps
+  pointed at the installed version). Nothing goes over the network.
+* Panes are drawn where Claude Code runs locally (terminal, VS Code, the desktop app's local sessions).
+  They use Claude Code's mod API, which is early access and may change between releases.
+
 ## Sync between machines (optional)
 
 Point the ledger at a folder you already sync (Dropbox, iCloud Drive, Syncthing, OneDrive...):

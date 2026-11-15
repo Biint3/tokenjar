@@ -2,3 +2,7 @@ node_modules/
 .tmp/
 *.log
 coverage/
+
+# Written by Claude Code when it loads the pane (editor types)
+plugins/tokenjar-pane/.claude-plugin/types/
+plugins/tokenjar-pane/tsconfig.json

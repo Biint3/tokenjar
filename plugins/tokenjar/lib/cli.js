@@ -68,6 +68,7 @@ async function runHook(event) {
     switch (event) {
       case 'session-start':
         statusline.refreshShim();
+        statusline.refreshCliShim();
         break;
       case 'sync': // Stop, SubagentStop, SessionEnd
         if (input.transcript_path) syncSession(cfg, input.transcript_path);
