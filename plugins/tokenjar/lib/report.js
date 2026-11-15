@@ -8,6 +8,7 @@ const ledger = require('./ledger');
 const budget = require('./budget');
 const periods = require('./periods');
 const plan = require('./plan');
+const enforce = require('./enforce');
 
 const LEVEL_COLOR = { ok: 'green', warn: 'yellow', over: 'red', none: 'dim' };
 
@@ -310,12 +311,14 @@ function panelJson(cfg, { sessionId = null, cwd = null, now = new Date(), errors
       resets: fmt.resetLabel(st.end, now),
       isDefault: name === cfg.default_bucket,
       isSession: Boolean(session && session.bucket === name),
+      configured: !st.bucket.unconfigured,
+      extendBy: st.limit && !st.bucket.unconfigured ? enforce.suggestExtend(st.bucket.limit || st.baseLimit) : null,
     };
   });
   const { current: cur, calibration: cal, shares, claudeCodeTotal } = planInfo(cfg, snap, now);
   return {
     metric: acc.metricLabel(cfg.metric),
-    session: session ? { bucket: session.bucket, reason: session.reason || null } : null,
+    session: session ? { bucket: session.bucket, reason: session.reason || null, isSet: Boolean(sessionId && snap.overrides[sessionId]) } : null,
     buckets,
     plan: {
       weeklyPct: cur && cur.weekly ? cur.weekly.pct : null,

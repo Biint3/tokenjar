@@ -139,7 +139,7 @@ test('panel command: JSON for the pane, and it records a plan reading passed wit
   try {
     sb.fixture('session-basic.jsonl');
     fs.mkdirSync(sb.env.TOKENJAR_HOME, { recursive: true });
-    fs.writeFileSync(path.join(sb.env.TOKENJAR_HOME, 'budgets.yaml'), 'buckets:\n  work:\n    limit: 30% of plan\n');
+    fs.writeFileSync(path.join(sb.env.TOKENJAR_HOME, 'budgets.yaml'), 'buckets:\n  work:\n    limit: 30% of plan\n  fixed:\n    paths: [~/nowhere]\n    limit: 1M\n');
     const reset = Math.round(Date.now() / 1000) + 3 * 86400;
     const planArg = JSON.stringify({ rate_limits: { seven_day: { used_percentage: 21, resets_at: reset } } });
     const r = spawnSync(process.execPath, [CLI, 'panel', '--session', 'abc', '--cwd', sb.dir, `--plan=${planArg}`], { encoding: 'utf8', env: process.env });
@@ -151,6 +151,12 @@ test('panel command: JSON for the pane, and it records a plan reading passed wit
     assert.equal(out.plan.needed, plan.MIN_POINTS);
     assert.ok(out.session && typeof out.session.bucket === 'string');
     assert.equal(plan.load().latest.weekly.pct, 21);
+    assert.equal(work.extendBy, null);
+    assert.equal(out.buckets.find((b) => b.name === 'fixed').extendBy, '300k');
+    const ext = spawnSync(process.execPath, [CLI, 'budget', 'extend', 'work', '5M'], { encoding: 'utf8', env: process.env }).stdout;
+    assert.match(ext, /still calibrating/);
+    const ext2 = spawnSync(process.execPath, [CLI, 'budget', 'extend', 'fixed', '300k'], { encoding: 'utf8', env: process.env }).stdout;
+    assert.match(ext2, /Extended "fixed" by 300k/);
   } finally {
     sb.cleanup();
   }

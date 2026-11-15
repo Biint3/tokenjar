@@ -246,11 +246,16 @@ function cmdExtend(loaded, rest) {
   if (!name || !amountRaw) return 'usage: /budget extend <bucket> <amount>   e.g. /budget extend work 5M';
   const b = cfg.buckets[name];
   if (!b) return `No bucket "${name}" in ${loaded.file}. Buckets: ${cfg.bucketList.map((x) => x.name).join(', ')}`;
-  if (b.limit === null) return `"${name}" has no limit, so there is nothing to extend.`;
   const amt = format.parseAmount(amountRaw);
   if (!Number.isFinite(amt) || amt <= 0) return `"${amountRaw}" is not an amount. Use e.g. 500k, 5M or 1.5B.`;
   syncForReport(cfg);
+  // Use the evaluated limit: a "% of plan" bucket has one once calibrated.
   const before = budget.bucketStatus(cfg, aggregate.snapshot(cfg), name);
+  if (before.limit === null) {
+    return before.calibrating
+      ? `"${name}" has no limit yet (its plan share is still calibrating), so there is nothing to extend.`
+      : `"${name}" has no limit, so there is nothing to extend.`;
+  }
   ledger.recordEvent(cfg, { t: 'x', b: name, amt, ps: before.startDay });
   const st = budget.bucketStatus(cfg, aggregate.snapshot(cfg), name);
   return [
